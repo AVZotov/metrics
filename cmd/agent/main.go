@@ -22,7 +22,8 @@ func main() {
 
 func run() error {
 	client := &http.Client{}
-	a := agent.NewAgent(client)
+	baseURL := "http://localhost:8080"
+	a := agent.NewAgent(client, baseURL)
 
 	go func() {
 		for {

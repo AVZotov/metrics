@@ -10,15 +10,17 @@ import (
 
 type Agent struct {
 	client  *http.Client
+	baseURL string
 	gauge   map[string]float64
 	counter map[string]int64
 }
 
-func NewAgent(client *http.Client) *Agent {
+func NewAgent(client *http.Client, baseURL string) *Agent {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
 	return &Agent{
 		client:  client,
+		baseURL: baseURL,
 		gauge:   gauge,
 		counter: counter,
 	}
@@ -77,7 +79,7 @@ func (a *Agent) Report() error {
 }
 
 func (a *Agent) sendMetric(metricType, name, value string) error {
-	url := fmt.Sprintf("http://localhost:8080/update/%s/%s/%s", metricType, name, value)
+	url := fmt.Sprintf("%s/update/%s/%s/%s", a.baseURL, metricType, name, value)
 	resp, err := a.client.Post(url, "text/plain", nil)
 	if err != nil {
 		return err
