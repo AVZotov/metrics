@@ -2,7 +2,7 @@ package service
 
 import (
 	"strconv"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -24,24 +24,24 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 	if name == "" {
 		return errors.ErrEmptyMetricName
 	}
-	
+
 	if metricType == "" {
 		return errors.ErrEmptyMetricType
 	}
-	
+
 	if metricType != models.Counter && metricType != models.Gauge {
 		return errors.ErrUnknownMetricType
 	}
-	
+
 	if value == "" {
 		return errors.ErrEmptyMetricValue
 	}
-	
+
 	metrics := &models.Metrics{
 		ID:    name,
 		MType: metricType,
 	}
-	
+
 	switch metrics.MType {
 	case models.Counter:
 		v, err := parseInt(value)
@@ -56,12 +56,20 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 		}
 		metrics.Value = &v
 	}
-	
+
 	if err := m.repository.Save(metrics); err != nil {
 		return err
 	}
-	
+
 	return nil
+}
+
+func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {
+	return m.repository.Get(id, mType)
+}
+
+func (m *MetricsService) GetMetrics() ([]*models.Metrics, error) {
+	return m.repository.GetAll()
 }
 
 func parseInt(s string) (int64, error) {
