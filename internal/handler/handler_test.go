@@ -97,7 +97,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			tt.name, func(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, tt.want.path, nil)
 				w := httptest.NewRecorder()
-				h.update(w, request)
+				router := NewRouter(h)
+				router.ServeHTTP(w, request)
 				assert.Equal(t, tt.want.statusCode, w.Code)
 				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
 			},
@@ -130,7 +131,8 @@ func TestHandler_badRequest(t *testing.T) {
 			tt.name, func(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, tt.want.path, nil)
 				w := httptest.NewRecorder()
-				h.badRequest(w, request)
+				router := NewRouter(h)
+				router.ServeHTTP(w, request)
 				assert.Equal(t, tt.want.statusCode, w.Code)
 				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
 			},
