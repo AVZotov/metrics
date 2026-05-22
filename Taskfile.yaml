@@ -1,0 +1,68 @@
+version: '3'
+
+tasks:
+  server-start:
+    deps:
+      - build-server
+    cmd: .task/server & echo $! > .task/server.pid
+
+  client-start:
+    deps:
+      - build-client
+    cmd: .task/client & echo $! > .task/client.pid
+
+  server-stop:
+    cmd: kill $(cat .task/server.pid) && rm -f .task/server.pid
+
+  client-stop:
+    cmd: kill $(cat .task/client.pid) && rm -f .task/client.pid
+
+  app-start:
+    cmds:
+      - task: server-start
+      - |
+        for i in $(seq 1 30); do
+          nc -z localhost 8080 && break
+          sleep 0.1
+        done
+      - task: client-start
+
+  app-stop:
+    cmds:
+      - task: server-stop
+      - task: client-stop
+
+  app-restart:
+    cmds:
+      - task: app-stop
+      - task: app-start
+
+  init:
+    cmds:
+      - mkdir -p .task
+    status:
+      - test -d .task
+
+  build-server:
+    deps:
+      - init
+      - generate
+    cmds:
+      - go build -o .task/server ./cmd/server
+
+  build-client:
+    deps:
+      - init
+      - generate
+    cmds:
+      - go build -o .task/client ./cmd/agent
+
+  build:
+    deps:
+      - build-server
+      - build-client
+
+  generate:
+    run: once
+    cmds:
+      - templ generate
