@@ -1,16 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/agent"
-)
-
-const (
-	pollInterval   = 2
-	reportInterval = 10
+	"github.com/AVZotov/metrics/internal/config"
 )
 
 func main() {
@@ -21,25 +18,26 @@ func main() {
 }
 
 func run() error {
+	cfg := config.NewAgentConfig()
 	client := &http.Client{}
-	baseURL := "http://localhost:8080"
+	baseURL := fmt.Sprintf("http://%s", cfg.String())
 	a := agent.NewAgent(client, baseURL)
-
-	go func() {
+	
+	go func(pi uint) {
 		for {
 			a.Collect()
-			time.Sleep(time.Duration(pollInterval) * time.Second)
+			time.Sleep(time.Duration(pi) * time.Second)
 		}
-	}()
-
-	go func() {
+	}(cfg.PollInterval)
+	
+	go func(ri uint) {
 		for {
 			if err := a.Report(); err != nil {
 				log.Println(err)
 			}
-			time.Sleep(time.Duration(reportInterval) * time.Second)
+			time.Sleep(time.Duration(ri) * time.Second)
 		}
-	}()
-
+	}(cfg.ReportInterval)
+	
 	select {}
 }

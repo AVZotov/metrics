@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"sync"
 )
 
 type Agent struct {
+	mu      sync.Mutex
 	client  *http.Client
 	baseURL string
 	gauge   map[string]float64
@@ -27,6 +29,9 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 }
 
 func (a *Agent) Collect() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -62,14 +67,26 @@ func (a *Agent) Collect() {
 }
 
 func (a *Agent) Report() error {
+	a.mu.Lock()
+	// Copy data to avoid agent locked if connection slow
+	gauge := make(map[string]float64, len(a.gauge))
 	for k, v := range a.gauge {
+		gauge[k] = v
+	}
+	counter := make(map[string]int64, len(a.counter))
+	for k, v := range a.counter {
+		counter[k] = v
+	}
+	a.mu.Unlock()
+
+	for k, v := range gauge {
 		sv := strconv.FormatFloat(v, 'f', -1, 64)
 		if err := a.sendMetric("gauge", k, sv); err != nil {
 			return err
 		}
 	}
 
-	for k, v := range a.counter {
+	for k, v := range counter {
 		sv := strconv.FormatInt(v, 10)
 		if err := a.sendMetric("counter", k, sv); err != nil {
 			return err
