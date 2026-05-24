@@ -1,41 +1,15 @@
 package config
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
-	
-	e "github.com/AVZotov/metrics/internal/errors"
 )
 
-var _ flag.Value = (*AgentConfig)(nil)
-
 type AgentConfig struct {
-	Host           string
-	Port           int
+	Address
 	PollInterval   uint
 	ReportInterval uint
-}
-
-func (s *AgentConfig) String() string {
-	return fmt.Sprintf("%s:%d", s.Host, s.Port)
-}
-
-func (s *AgentConfig) Set(str string) error {
-	hp := strings.Split(str, ":")
-	if len(hp) != 2 {
-		return errors.New("need address in form host:port")
-	}
-	s.Host = hp[0]
-	p, err := strconv.Atoi(hp[1])
-	if err != nil {
-		return e.ErrInvalidValue
-	}
-	s.Port = p
-	return nil
 }
 
 func NewAgentConfig() *AgentConfig {
@@ -46,7 +20,7 @@ func NewAgentConfig() *AgentConfig {
 }
 
 func parseAgentFlags(config *AgentConfig) {
-	flag.Var(config, "a", "address in form host:port")
+	flag.Var(&config.Address, "a", "address in form host:port")
 	pollInterval := flag.Uint("p", PollInterval, "poll interval in seconds")
 	reportInterval := flag.Uint("r", ReportInterval, "report interval in seconds")
 	
@@ -71,7 +45,7 @@ func setAgentDefaults(s *AgentConfig) {
 	if s.Port == 0 {
 		s.Port = Port
 	}
-	// this sets defaults if poll or report equals to zero
+	// this sets defaults if poll or report intervals equals to zero
 	if s.PollInterval == 0 {
 		s.PollInterval = PollInterval
 	}

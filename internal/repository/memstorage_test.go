@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"sync"
 	"testing"
 	
 	"github.com/stretchr/testify/assert"
@@ -208,4 +209,48 @@ func TestMemStorage_GetAll(t *testing.T) {
 			assert.ElementsMatch(t, []string{"g1", "g2", "c1"}, ids)
 		},
 	)
+}
+
+// Need to run with -race detector for full coverage
+// Yandex git:(iter4) go test -race ./...
+// fatal error: concurrent map writes without mutex
+func TestMemStorage_ConcurrentSave(t *testing.T) {
+	s := NewMemStorage()
+	const requests int64 = 1000
+	
+	tests := []struct {
+		name string
+		want int64
+	}{
+		{
+			name: "concurrent save must return N requests",
+			want: requests,
+		},
+	}
+	
+	for _, tt := range tests {
+		var wg sync.WaitGroup
+		t.Run(
+			tt.name, func(t *testing.T) {
+				for i := 0; i < int(requests); i++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						err := s.Save(
+							&models.Metrics{
+								ID:    "counter",
+								MType: models.Counter,
+								Delta: new(int64(1)),
+							},
+						)
+						if err != nil {
+							assert.NoError(t, err)
+						}
+					}()
+				}
+				wg.Wait()
+			},
+		)
+	}
+	assert.Equal(t, requests, *s.counter["counter"].Delta)
 }

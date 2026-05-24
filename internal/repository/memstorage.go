@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"sync"
+	
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -8,6 +10,7 @@ import (
 var _ Repository = (*MemStorage)(nil)
 
 type MemStorage struct {
+	mu      sync.RWMutex
 	gauge   map[string]models.Metrics
 	counter map[string]models.Metrics
 }
@@ -20,10 +23,12 @@ func NewMemStorage() *MemStorage {
 }
 
 func (m *MemStorage) Save(metrics *models.Metrics) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if metrics == nil {
 		return errors.ErrNilMetric
 	}
-
+	
 	switch metrics.MType {
 	case models.Counter:
 		if metrics.Delta == nil {
@@ -46,6 +51,8 @@ func (m *MemStorage) Save(metrics *models.Metrics) error {
 }
 
 func (m *MemStorage) Get(id, mType string) (*models.Metrics, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	switch mType {
 	case models.Counter:
 		mm, ok := m.counter[id]
@@ -65,6 +72,8 @@ func (m *MemStorage) Get(id, mType string) (*models.Metrics, error) {
 }
 
 func (m *MemStorage) GetAll() ([]*models.Metrics, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	result := make([]*models.Metrics, 0, len(m.gauge)+len(m.counter))
 	for _, v := range m.gauge {
 		result = append(result, &v)

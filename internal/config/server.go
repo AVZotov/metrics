@@ -1,39 +1,13 @@
 package config
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
-	
-	e "github.com/AVZotov/metrics/internal/errors"
 )
 
-var _ flag.Value = (*ServerConfig)(nil)
-
 type ServerConfig struct {
-	Host string
-	Port int
-}
-
-func (s *ServerConfig) String() string {
-	return fmt.Sprintf("%s:%d", s.Host, s.Port)
-}
-
-func (s *ServerConfig) Set(str string) error {
-	hp := strings.Split(str, ":")
-	if len(hp) != 2 {
-		return errors.New("need address in form host:port")
-	}
-	s.Host = hp[0]
-	p, err := strconv.Atoi(hp[1])
-	if err != nil {
-		return e.ErrInvalidValue
-	}
-	s.Port = p
-	return nil
+	Address
 }
 
 func NewServerConfig() *ServerConfig {
@@ -44,7 +18,7 @@ func NewServerConfig() *ServerConfig {
 }
 
 func parseServerFlags(config *ServerConfig) {
-	flag.Var(config, "a", "address in form host:port")
+	flag.Var(&config.Address, "a", "address in form host:port")
 	
 	flag.Parse()
 	
