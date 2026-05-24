@@ -31,7 +31,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
+	
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -62,8 +62,8 @@ func (a *Agent) Collect() {
 	a.gauge["Sys"] = float64(stats.Sys)
 	a.gauge["TotalAlloc"] = float64(stats.TotalAlloc)
 	a.gauge["RandomValue"] = rand.Float64()
-
-	a.counter["PollCount"] += 1
+	
+	a.counter["PollCount"]++
 }
 
 func (a *Agent) Report() error {
@@ -78,14 +78,14 @@ func (a *Agent) Report() error {
 		counter[k] = v
 	}
 	a.mu.Unlock()
-
+	
 	for k, v := range gauge {
 		sv := strconv.FormatFloat(v, 'f', -1, 64)
 		if err := a.sendMetric("gauge", k, sv); err != nil {
 			return err
 		}
 	}
-
+	
 	for k, v := range counter {
 		sv := strconv.FormatInt(v, 10)
 		if err := a.sendMetric("counter", k, sv); err != nil {
