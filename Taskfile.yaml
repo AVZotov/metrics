@@ -1,0 +1,107 @@
+version: '3'
+
+silent: true
+
+tasks:
+  generate:
+    desc: "Generate templ files"
+    run: once
+    cmds:
+      - echo "🔄 Generating templ files..."
+      - templ generate
+      - echo "✅ Generation complete"
+
+  init:
+    desc: "Initialize build directory"
+    run: once
+    cmds:
+      - mkdir -p .task
+    status:
+      - test -d .task
+
+  build-server:
+    desc: "Build server binary"
+    deps: [init, generate]
+    cmds:
+      - echo "🔨 Building server..."
+      - go build -o .task/server ./cmd/server
+      - echo "✅ Server built"
+
+  build-client:
+    desc: "Build client binary"
+    deps: [init, generate]
+    cmds:
+      - echo "🔨 Building client..."
+      - go build -o .task/client ./cmd/agent
+      - echo "✅ Client built"
+
+  build:
+    desc: "Build all binaries"
+    deps: [build-server, build-client]
+    cmds:
+      - echo "✅ All binaries ready"
+
+  server-start:
+    desc: "Start server process"
+    cmds:
+      - bash -c '.task/server & echo $! > .task/server.pid'
+      - echo "🚀 Server started (PID $(cat .task/server.pid))"
+
+  client-start:
+    desc: "Start client process"
+    cmds:
+      - bash -c '.task/client & echo $! > .task/client.pid'
+      - echo "🚀 Client started (PID $(cat .task/client.pid))"
+
+  server-stop:
+    desc: "Stop server process"
+    cmds:
+      - cmd: bash -c 'kill $(cat .task/server.pid) && rm -f .task/server.pid'
+        ignore_error: true
+      - echo "🛑 Server stopped"
+
+  client-stop:
+    desc: "Stop client process"
+    cmds:
+      - cmd: bash -c 'kill $(cat .task/client.pid) && rm -f .task/client.pid'
+        ignore_error: true
+      - echo "🛑 Client stopped"
+
+  app-start:
+    desc: "Build and start all processes"
+    deps: [build]
+    cmds:
+      - echo "⚡ Starting app..."
+      - task: server-start
+      - echo "⏳ Waiting for server to be ready..."
+      - |
+        for i in $(seq 1 30); do
+          nc -z localhost 8080 && break
+          sleep 0.1
+        done
+      - echo "✅ Server is ready"
+      - task: client-start
+      - echo "🎉 App is up and running!"
+
+  app-stop:
+    desc: "Stop all processes"
+    cmds:
+      - echo "⚡ Stopping app..."
+      - task: server-stop
+      - task: client-stop
+      - echo "👋 App stopped"
+
+  app-restart:
+    desc: "Restart all processes"
+    cmds:
+      - echo "🔄 Restarting app..."
+      - task: app-stop
+      - task: app-start
+
+  clean:
+    desc: "Stop all processes and remove build artifacts"
+    cmds:
+      - echo "🧹 Cleaning up..."
+      - task: app-stop
+      - rm -rf .task
+      - echo "✨ Clean complete"
