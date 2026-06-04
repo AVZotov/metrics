@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
-	
+
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -17,7 +17,10 @@ func main() {
 }
 
 func run() error {
-	cfg := config.NewServerConfig()
+	cfg, err := config.NewServerConfig()
+	if err != nil {
+		return err
+	}
 	r := repository.NewMemStorage()
 	s := service.NewMetricsService(r)
 	h := handler.New(s)

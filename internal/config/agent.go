@@ -62,7 +62,7 @@ func parseAgentEnv(cfg *AgentConfig) error {
 }
 
 func validateAgentConfig(cfg *AgentConfig) error {
-	if cfg.PollInterval <= 0 {
+	if cfg.PollInterval == 0 {
 		return apperrors.ErrInvalidPollInterval
 	}
 	if cfg.ReportInterval == 0 {
