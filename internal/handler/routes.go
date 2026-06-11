@@ -21,7 +21,9 @@ func register(mux *chi.Mux, h *Handler) {
 		func(mux chi.Router) {
 			mux.Use(ContentTypeMiddleware("application/json"))
 			mux.Post("/update", h.updateJSON)
+			mux.Post("/update/", h.updateJSON)
 			mux.Post("/value", h.valueJSON)
+			mux.Post("/value/", h.valueJSON)
 		},
 	)
 }
