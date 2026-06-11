@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	
+
 	e "github.com/AVZotov/metrics/internal/errors"
 	"github.com/AVZotov/metrics/internal/handler/templates"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -42,11 +42,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-}
-
-func (h *Handler) badRequest(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusBadRequest)
 }
 
 func (h *Handler) getValue(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +161,7 @@ func (h *Handler) valueJSON(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("invalid json data", zap.String("metric", m.ID), zap.String("type", m.MType))
 		return
 	}
-	got, err := h.service.GetMetric(m.MType, m.ID)
+	got, err := h.service.GetMetric(m.ID, m.MType)
 	if err != nil {
 		if errors.Is(err, e.ErrNotFound) {
 			h.logger.Info("metric not found", zap.String("metric", m.ID), zap.String("type", m.MType))

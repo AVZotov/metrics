@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	
+
+	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -261,5 +263,213 @@ func TestHandler_getAll(t *testing.T) {
 				}
 			},
 		)
+	}
+}
+
+func TestHandler_updateJSON(t *testing.T) {
+	type want struct {
+		statusCode  int
+		contentType string
+	}
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		want        want
+	}{
+		{
+			name:        "counter valid",
+			contentType: "application/json",
+			body:        `{"id":"myCounter","type":"counter","delta":42}`,
+			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8"},
+		},
+		{
+			name:        "gauge valid",
+			contentType: "application/json",
+			body:        `{"id":"myGauge","type":"gauge","value":3.14}`,
+			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8"},
+		},
+		{
+			name:        "counter missing delta",
+			contentType: "application/json",
+			body:        `{"id":"myCounter","type":"counter"}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "gauge missing value",
+			contentType: "application/json",
+			body:        `{"id":"myGauge","type":"gauge"}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "unknown type",
+			contentType: "application/json",
+			body:        `{"id":"myMetric","type":"unknown","delta":1}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "invalid json",
+			contentType: "application/json",
+			body:        `not json`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "wrong content type",
+			contentType: "text/plain",
+			body:        `{"id":"myCounter","type":"counter","delta":42}`,
+			want:        want{statusCode: http.StatusUnsupportedMediaType},
+		},
+	}
+	router := setupRouter()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, tt.want.statusCode, w.Code)
+			if tt.want.contentType != "" {
+				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
+			}
+		})
+	}
+}
+
+func TestHandler_valueJSON(t *testing.T) {
+	delta42 := int64(42)
+	value314 := float64(3.14)
+	type want struct {
+		statusCode  int
+		contentType string
+		bodyDelta   *int64
+		bodyValue   *float64
+	}
+	tests := []struct {
+		name        string
+		contentType string
+		seedURL     string
+		body        string
+		want        want
+	}{
+		{
+			name:        "counter existing",
+			contentType: "application/json",
+			seedURL:     "/update/counter/myCounter/42",
+			body:        `{"id":"myCounter","type":"counter"}`,
+			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyDelta: &delta42},
+		},
+		{
+			name:        "gauge existing",
+			contentType: "application/json",
+			seedURL:     "/update/gauge/myGauge/3.14",
+			body:        `{"id":"myGauge","type":"gauge"}`,
+			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyValue: &value314},
+		},
+		{
+			name:        "counter not found",
+			contentType: "application/json",
+			body:        `{"id":"unknown","type":"counter"}`,
+			want:        want{statusCode: http.StatusNotFound},
+		},
+		{
+			name:        "unknown type",
+			contentType: "application/json",
+			body:        `{"id":"myMetric","type":"unknown"}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "empty id",
+			contentType: "application/json",
+			body:        `{"id":"","type":"counter"}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "empty type",
+			contentType: "application/json",
+			body:        `{"id":"myCounter","type":""}`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "invalid json",
+			contentType: "application/json",
+			body:        `not json`,
+			want:        want{statusCode: http.StatusBadRequest},
+		},
+		{
+			name:        "wrong content type",
+			contentType: "text/plain",
+			body:        `{"id":"myCounter","type":"counter"}`,
+			want:        want{statusCode: http.StatusUnsupportedMediaType},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := setupRouter()
+			if tt.seedURL != "" {
+				seedReq := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
+				seedReq.Header.Set("Content-Type", "text/plain")
+				router.ServeHTTP(httptest.NewRecorder(), seedReq)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/value", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, tt.want.statusCode, w.Code)
+			if tt.want.contentType != "" {
+				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
+			}
+			if tt.want.bodyDelta != nil || tt.want.bodyValue != nil {
+				var got models.Metrics
+				assert.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+				if tt.want.bodyDelta != nil {
+					assert.Equal(t, *tt.want.bodyDelta, *got.Delta)
+				}
+				if tt.want.bodyValue != nil {
+					assert.Equal(t, *tt.want.bodyValue, *got.Value)
+				}
+			}
+		})
+	}
+}
+
+func TestContentTypeMiddleware(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	tests := []struct {
+		name        string
+		contentType string
+		wantStatus  int
+	}{
+		{
+			name:        "exact match",
+			contentType: "application/json",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "match with charset",
+			contentType: "application/json; charset=utf-8",
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "wrong type",
+			contentType: "text/plain",
+			wantStatus:  http.StatusUnsupportedMediaType,
+		},
+		{
+			name:        "empty",
+			contentType: "",
+			wantStatus:  http.StatusUnsupportedMediaType,
+		},
+	}
+	mw := ContentTypeMiddleware("application/json")(next)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			mw.ServeHTTP(w, req)
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
 	}
 }

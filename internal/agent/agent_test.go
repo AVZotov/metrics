@@ -52,7 +52,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 			func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				cType := r.Header.Get("Content-Type")
-				assert.Equal(t, "text/plain", cType)
+				assert.Equal(t, "application/json", cType)
 			},
 		),
 	)

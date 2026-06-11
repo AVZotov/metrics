@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"runtime"
 	"strconv"
 	"sync"
+	
+	models "github.com/AVZotov/metrics/internal/model"
 )
 
 type Agent struct {
@@ -81,14 +85,14 @@ func (a *Agent) Report() error {
 	
 	for k, v := range gauge {
 		sv := strconv.FormatFloat(v, 'f', -1, 64)
-		if err := a.sendMetric("gauge", k, sv); err != nil {
+		if err := a.sendMetricJSON("gauge", k, sv); err != nil {
 			return err
 		}
 	}
 	
 	for k, v := range counter {
 		sv := strconv.FormatInt(v, 10)
-		if err := a.sendMetric("counter", k, sv); err != nil {
+		if err := a.sendMetricJSON("counter", k, sv); err != nil {
 			return err
 		}
 	}
@@ -98,6 +102,38 @@ func (a *Agent) Report() error {
 func (a *Agent) sendMetric(metricType, name, value string) error {
 	url := fmt.Sprintf("%s/update/%s/%s/%s", a.baseURL, metricType, name, value)
 	resp, err := a.client.Post(url, "text/plain", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func (a *Agent) sendMetricJSON(metricType, name, value string) error {
+	url := fmt.Sprintf("%s/update", a.baseURL)
+	m := models.Metrics{
+		ID:    name,
+		MType: metricType,
+	}
+	switch metricType {
+	case models.Gauge:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return err
+		}
+		m.Value = &v
+	case models.Counter:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		m.Delta = &v
+	}
+	buf := bytes.NewBuffer(nil)
+	if err := json.NewEncoder(buf).Encode(m); err != nil {
+		return err
+	}
+	resp, err := a.client.Post(url, "application/json", buf)
 	if err != nil {
 		return err
 	}
