@@ -100,23 +100,26 @@ func (h *Handler) getAll(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 	m := new(models.Metrics)
+	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(m); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
-	if m.Delta == nil || m.Value == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	
 	switch m.MType {
 	case models.Counter:
+		if m.Delta == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatInt(*m.Delta, 10)); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 	case models.Gauge:
+		if m.Value == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64)); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
