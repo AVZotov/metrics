@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 	
 	"go.uber.org/zap"
@@ -39,6 +40,20 @@ func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
 					zap.Int("status", ww.status),
 					zap.Duration("duration", time.Since(start)),
 				)
+			},
+		)
+	}
+}
+
+func ContentTypeMiddleware(contentType string) func(handler http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				if !strings.Contains(r.Header.Get("Content-Type"), contentType) {
+					w.WriteHeader(http.StatusUnsupportedMediaType)
+					return
+				}
+				next.ServeHTTP(w, r)
 			},
 		)
 	}

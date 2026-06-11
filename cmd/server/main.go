@@ -29,7 +29,7 @@ func run() error {
 	defer logger.Sync()
 	r := repository.NewMemStorage()
 	s := service.NewMetricsService(r)
-	h := handler.New(s)
+	h := handler.New(s, logger)
 	mux := handler.NewRouter(h, logger)
 	server := &http.Server{
 		Addr:    cfg.String(),

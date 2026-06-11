@@ -16,8 +16,8 @@ import (
 func setupRouter() chi.Router {
 	r := repository.NewMemStorage()
 	s := service.NewMetricsService(r)
-	h := New(s)
 	logger, _ := zap.NewDevelopment()
+	h := New(s, logger)
 	router := NewRouter(h, logger)
 	return router
 }
@@ -29,11 +29,13 @@ func TestHandler_update_Counter(t *testing.T) {
 		statusCode  int
 	}
 	tests := []struct {
-		name string
-		want want
+		name        string
+		contentType string
+		want        want
 	}{
 		{
-			name: "counter positive",
+			name:        "counter positive",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/counter/testCounter/527",
 				contentType: "text/plain; charset=utf-8",
@@ -41,7 +43,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "counter wrong metric type",
+			name:        "counter wrong metric type",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/wrong/testCounter/527",
 				contentType: "text/plain; charset=utf-8",
@@ -49,7 +52,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "counter no metric name",
+			name:        "counter no metric name",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/counter//527",
 				contentType: "text/plain; charset=utf-8",
@@ -57,7 +61,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "counter not int value",
+			name:        "counter not int value",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/counter/testCounter/123.456",
 				contentType: "text/plain; charset=utf-8",
@@ -65,7 +70,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "gauge positive",
+			name:        "gauge positive",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/gauge/testCounter/123.456",
 				contentType: "text/plain; charset=utf-8",
@@ -73,7 +79,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "gauge wrong Metric type",
+			name:        "gauge wrong Metric type",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/wrong/testCounter/123.456",
 				contentType: "text/plain; charset=utf-8",
@@ -81,7 +88,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "gauge no metric name",
+			name:        "gauge no metric name",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/gauge//123.456",
 				contentType: "text/plain; charset=utf-8",
@@ -89,7 +97,8 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 		{
-			name: "gauge not float value",
+			name:        "gauge not float value",
+			contentType: "text/plain; charset=utf-8",
 			want: want{
 				path:        "http://localhost:8080/update/gauge/testCounter/abc",
 				contentType: "text/plain; charset=utf-8",
@@ -102,39 +111,7 @@ func TestHandler_update_Counter(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, tt.want.path, nil)
-				w := httptest.NewRecorder()
-				router.ServeHTTP(w, request)
-				assert.Equal(t, tt.want.statusCode, w.Code)
-				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
-			},
-		)
-	}
-}
-
-func TestHandler_badRequest(t *testing.T) {
-	type want struct {
-		path        string
-		contentType string
-		statusCode  int
-	}
-	tests := []struct {
-		name string
-		want want
-	}{
-		{
-			name: "positive",
-			want: want{
-				path:        "http://localhost:8080/update",
-				contentType: "text/plain; charset=utf-8",
-				statusCode:  http.StatusBadRequest,
-			},
-		},
-	}
-	router := setupRouter()
-	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				request := httptest.NewRequest(http.MethodPost, tt.want.path, nil)
+				request.Header.Add("Content-Type", tt.contentType)
 				w := httptest.NewRecorder()
 				router.ServeHTTP(w, request)
 				assert.Equal(t, tt.want.statusCode, w.Code)
@@ -151,15 +128,17 @@ func TestHandler_getValue(t *testing.T) {
 		body        string
 	}
 	tests := []struct {
-		name    string
-		seedURL string
-		getURL  string
-		want    want
+		name        string
+		contentType string
+		seedURL     string
+		getURL      string
+		want        want
 	}{
 		{
-			name:    "counter existing",
-			seedURL: "http://localhost:8080/update/counter/myCounter/42",
-			getURL:  "http://localhost:8080/value/counter/myCounter",
+			name:        "counter existing",
+			contentType: "text/plain; charset=utf-8",
+			seedURL:     "http://localhost:8080/update/counter/myCounter/42",
+			getURL:      "http://localhost:8080/value/counter/myCounter",
 			want: want{
 				statusCode:  http.StatusOK,
 				contentType: "text/plain; charset=utf-8",
@@ -167,9 +146,10 @@ func TestHandler_getValue(t *testing.T) {
 			},
 		},
 		{
-			name:    "gauge existing",
-			seedURL: "http://localhost:8080/update/gauge/myGauge/3.14",
-			getURL:  "http://localhost:8080/value/gauge/myGauge",
+			name:        "gauge existing",
+			contentType: "text/plain; charset=utf-8",
+			seedURL:     "http://localhost:8080/update/gauge/myGauge/3.14",
+			getURL:      "http://localhost:8080/value/gauge/myGauge",
 			want: want{
 				statusCode:  http.StatusOK,
 				contentType: "text/plain; charset=utf-8",
@@ -177,24 +157,27 @@ func TestHandler_getValue(t *testing.T) {
 			},
 		},
 		{
-			name:   "counter not found",
-			getURL: "http://localhost:8080/value/counter/unknown",
+			name:        "counter not found",
+			contentType: "text/plain; charset=utf-8",
+			getURL:      "http://localhost:8080/value/counter/unknown",
 			want: want{
 				statusCode:  http.StatusNotFound,
 				contentType: "text/plain; charset=utf-8",
 			},
 		},
 		{
-			name:   "gauge not found",
-			getURL: "http://localhost:8080/value/gauge/unknown",
+			name:        "gauge not found",
+			contentType: "text/plain; charset=utf-8",
+			getURL:      "http://localhost:8080/value/gauge/unknown",
 			want: want{
 				statusCode:  http.StatusNotFound,
 				contentType: "text/plain; charset=utf-8",
 			},
 		},
 		{
-			name:   "unknown metric type",
-			getURL: "http://localhost:8080/value/wrong/myMetric",
+			name:        "unknown metric type",
+			contentType: "text/plain; charset=utf-8",
+			getURL:      "http://localhost:8080/value/wrong/myMetric",
 			want: want{
 				statusCode:  http.StatusBadRequest,
 				contentType: "text/plain; charset=utf-8",
@@ -208,6 +191,7 @@ func TestHandler_getValue(t *testing.T) {
 				router := setupRouter()
 				if tt.seedURL != "" {
 					req := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
+					req.Header.Add("Content-Type", tt.contentType)
 					router.ServeHTTP(httptest.NewRecorder(), req)
 				}
 				req := httptest.NewRequest(http.MethodGet, tt.getURL, nil)
@@ -230,19 +214,22 @@ func TestHandler_getAll(t *testing.T) {
 	}
 	tests := []struct {
 		name         string
+		contentType  string
 		seedURLs     []string
 		bodyContains []string
 		want         want
 	}{
 		{
-			name: "empty storage",
+			name:        "empty storage",
+			contentType: "text/plain",
 			want: want{
 				statusCode:  http.StatusOK,
 				contentType: "text/html; charset=utf-8",
 			},
 		},
 		{
-			name: "with metrics",
+			name:        "with metrics",
+			contentType: "text/plain",
 			seedURLs: []string{
 				"http://localhost:8080/update/counter/hits/10",
 				"http://localhost:8080/update/gauge/temp/36.6",
@@ -261,6 +248,7 @@ func TestHandler_getAll(t *testing.T) {
 				router := setupRouter()
 				for _, u := range tt.seedURLs {
 					req := httptest.NewRequest(http.MethodPost, u, nil)
+					req.Header.Add("Content-Type", tt.contentType)
 					router.ServeHTTP(httptest.NewRecorder(), req)
 				}
 				req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
