@@ -1,10 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
-
+	
 	e "github.com/AVZotov/metrics/internal/errors"
 	"github.com/AVZotov/metrics/internal/handler/templates"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -93,6 +94,35 @@ func (h *Handler) getAll(w http.ResponseWriter, r *http.Request) {
 	err = templates.MetricsPage(dtos).Render(r.Context(), w)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+}
+
+func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
+	m := new(models.Metrics)
+	if err := json.NewDecoder(r.Body).Decode(m); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	if m.Delta == nil || m.Value == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	
+	switch m.MType {
+	case models.Counter:
+		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatInt(*m.Delta, 10)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	case models.Gauge:
+		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	default:
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 }

@@ -14,7 +14,7 @@ func NewRouter(h *Handler, logger *zap.Logger) *chi.Mux {
 
 func register(mux *chi.Mux, h *Handler) {
 	mux.Post("/update/{type}/{name}/{value}", h.update)
-	mux.Post("/update", h.badRequest)
+	mux.Post("/update", h.updateJSON)
 	mux.Get("/value/{type}/{name}", h.getValue)
 	mux.Get("/", h.getAll)
 }
