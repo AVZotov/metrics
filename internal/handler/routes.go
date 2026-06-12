@@ -8,6 +8,7 @@ import (
 func NewRouter(h *Handler, logger *zap.Logger) *chi.Mux {
 	mux := chi.NewMux()
 	mux.Use(LoggingMiddleware(logger))
+	mux.Use(CompressMiddleware())
 	register(mux, h)
 	return mux
 }
