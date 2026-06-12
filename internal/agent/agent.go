@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -130,13 +131,22 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 		m.Delta = &v
 	}
 	buf := bytes.NewBuffer(nil)
-	if err := json.NewEncoder(buf).Encode(m); err != nil {
+	gz := gzip.NewWriter(buf)
+	if err := json.NewEncoder(gz).Encode(m); err != nil {
 		return err
 	}
-	resp, err := a.client.Post(url, "application/json", buf)
+	gz.Close()
+	
+	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
 	return nil
 }
