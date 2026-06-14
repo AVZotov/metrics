@@ -1,7 +1,11 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +16,42 @@ import (
 	"github.com/AVZotov/metrics/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+type mockService struct {
+	updateFn func(mType, name, value string) error
+	getFn    func(id, mType string) (*models.Metrics, error)
+	getAllFn  func() ([]*models.Metrics, error)
+}
+
+func (m *mockService) UpdateMetric(mType, name, value string) error {
+	if m.updateFn != nil {
+		return m.updateFn(mType, name, value)
+	}
+	return nil
+}
+
+func (m *mockService) GetMetric(id, mType string) (*models.Metrics, error) {
+	if m.getFn != nil {
+		return m.getFn(id, mType)
+	}
+	return nil, nil
+}
+
+func (m *mockService) GetMetrics() ([]*models.Metrics, error) {
+	if m.getAllFn != nil {
+		return m.getAllFn()
+	}
+	return nil, nil
+}
+
+func setupRouterWithService(svc service.Service) chi.Router {
+	logger, _ := zap.NewDevelopment()
+	h := New(svc, logger)
+	return NewRouter(h, logger)
+}
 
 func setupRouter() chi.Router {
 	r := repository.NewMemStorage()
@@ -472,4 +510,218 @@ func TestContentTypeMiddleware(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, w.Code)
 		})
 	}
+}
+
+func TestHandler_updateJSON_ResponseBody(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantDelta *int64
+		wantValue *float64
+	}{
+		{
+			name:      "counter echoes delta in response",
+			body:      `{"id":"hits","type":"counter","delta":42}`,
+			wantDelta: func() *int64 { v := int64(42); return &v }(),
+		},
+		{
+			name:      "gauge echoes value in response",
+			body:      `{"id":"temp","type":"gauge","value":3.14}`,
+			wantValue: func() *float64 { v := 3.14; return &v }(),
+		},
+	}
+	router := setupRouter()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			var got models.Metrics
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+			if tt.wantDelta != nil {
+				require.NotNil(t, got.Delta)
+				assert.Equal(t, *tt.wantDelta, *got.Delta)
+			}
+			if tt.wantValue != nil {
+				require.NotNil(t, got.Value)
+				assert.Equal(t, *tt.wantValue, *got.Value)
+			}
+		})
+	}
+}
+
+func TestHandler_updateJSON_ServiceError_Returns500(t *testing.T) {
+	sentinel := errors.New("storage failure")
+	svc := &mockService{
+		updateFn: func(_, _, _ string) error { return sentinel },
+	}
+	router := setupRouterWithService(svc)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"counter service error", `{"id":"hits","type":"counter","delta":1}`},
+		{"gauge service error", `{"id":"temp","type":"gauge","value":1.5}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
+}
+
+func TestHandler_getValue_NilDelta_Returns500(t *testing.T) {
+	svc := &mockService{
+		getFn: func(id, _ string) (*models.Metrics, error) {
+			return &models.Metrics{ID: id, MType: models.Counter, Delta: nil}, nil
+		},
+	}
+	router := setupRouterWithService(svc)
+	req := httptest.NewRequest(http.MethodGet, "/value/counter/myCounter", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandler_getValue_NilValue_Returns500(t *testing.T) {
+	svc := &mockService{
+		getFn: func(id, _ string) (*models.Metrics, error) {
+			return &models.Metrics{ID: id, MType: models.Gauge, Value: nil}, nil
+		},
+	}
+	router := setupRouterWithService(svc)
+	req := httptest.NewRequest(http.MethodGet, "/value/gauge/myGauge", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandler_getAll_ServiceError_Returns500(t *testing.T) {
+	svc := &mockService{
+		getAllFn: func() ([]*models.Metrics, error) { return nil, errors.New("storage failure") },
+	}
+	router := setupRouterWithService(svc)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandler_valueJSON_ServiceInternalError_Returns500(t *testing.T) {
+	svc := &mockService{
+		getFn: func(_, _ string) (*models.Metrics, error) { return nil, errors.New("storage failure") },
+	}
+	router := setupRouterWithService(svc)
+	req := httptest.NewRequest(http.MethodPost, "/value", strings.NewReader(`{"id":"x","type":"gauge"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestLoggingMiddleware(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("hello"))
+	})
+	logger, _ := zap.NewDevelopment()
+	mw := LoggingMiddleware(logger)(next)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, "hello", w.Body.String())
+}
+
+func TestCompressMiddleware_Passthrough(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("pong"))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "pong", w.Body.String())
+	assert.Empty(t, w.Header().Get("Content-Encoding"))
+}
+
+func TestCompressMiddleware_InvalidGzipBody(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not gzip at all"))
+	req.Header.Set("Content-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
+	payload := `{"id":"cpu","type":"gauge","value":1.5}`
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = gz.Write([]byte(payload))
+	gz.Close()
+
+	var gotBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodPost, "/", &buf)
+	req.Header.Set("Content-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, payload, gotBody)
+}
+
+func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
+	body := `{"id":"cpu","type":"gauge","value":1.5}`
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
+	gr, err := gzip.NewReader(w.Body)
+	require.NoError(t, err)
+	defer gr.Close()
+	decompressed, err := io.ReadAll(gr)
+	require.NoError(t, err)
+	assert.Equal(t, body, string(decompressed))
+}
+
+func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
+	body := "<html><body>metrics</body></html>"
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
+	gr, err := gzip.NewReader(w.Body)
+	require.NoError(t, err)
+	defer gr.Close()
+	decompressed, err := io.ReadAll(gr)
+	require.NoError(t, err)
+	assert.Equal(t, body, string(decompressed))
 }

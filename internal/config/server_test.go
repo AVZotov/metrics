@@ -15,26 +15,109 @@ func TestSetServerDefaults(t *testing.T) {
 
 	assert.Equal(t, Host, cfg.Host)
 	assert.Equal(t, Port, cfg.Port)
+	assert.Equal(t, StoreInterval, cfg.StoreInterval)
+	assert.Equal(t, Restore, cfg.Restore)
+	assert.Equal(t, FileStoragePath, cfg.FileStoragePath)
+}
+
+func TestValidateServerConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     ServerConfig
+		wantErr bool
+	}{
+		{
+			name:    "valid config",
+			cfg:     ServerConfig{FileStoragePath: "data/metrics.json"},
+			wantErr: false,
+		},
+		{
+			name:    "empty file storage path returns error",
+			cfg:     ServerConfig{FileStoragePath: ""},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateServetConfig(&tt.cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestParseServerEnv(t *testing.T) {
 	tests := []struct {
-		name     string
-		envVars  map[string]string
-		wantHost string
-		wantPort int
-		wantErr  bool
+		name            string
+		envVars         map[string]string
+		wantHost        string
+		wantPort        int
+		wantStoreInt    int
+		wantRestore     bool
+		wantStoragePath string
+		wantErr         bool
 	}{
 		{
-			name:     "no env vars preserves defaults",
-			wantHost: Host,
-			wantPort: Port,
+			name:            "no env vars preserves defaults",
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
 		},
 		{
-			name:     "ADDRESS overrides host and port",
-			envVars:  map[string]string{"ADDRESS": "localhost:9090"},
-			wantHost: "localhost",
-			wantPort: 9090,
+			name:            "ADDRESS overrides host and port",
+			envVars:         map[string]string{"ADDRESS": "localhost:9090"},
+			wantHost:        "localhost",
+			wantPort:        9090,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "STORE_INTERVAL overrides default",
+			envVars:         map[string]string{"STORE_INTERVAL": "60"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    60,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "RESTORE=false overrides default",
+			envVars:         map[string]string{"RESTORE": "false"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     false,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "FILE_STORAGE_PATH overrides default",
+			envVars:         map[string]string{"FILE_STORAGE_PATH": "/tmp/metrics.json"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: "/tmp/metrics.json",
+		},
+		{
+			name: "all env vars set",
+			envVars: map[string]string{
+				"ADDRESS":           "remotehost:7070",
+				"STORE_INTERVAL":    "120",
+				"RESTORE":           "false",
+				"FILE_STORAGE_PATH": "/var/metrics.json",
+			},
+			wantHost:        "remotehost",
+			wantPort:        7070,
+			wantStoreInt:    120,
+			wantRestore:     false,
+			wantStoragePath: "/var/metrics.json",
 		},
 		{
 			name:    "invalid ADDRESS format returns error",
@@ -44,6 +127,11 @@ func TestParseServerEnv(t *testing.T) {
 		{
 			name:    "ADDRESS with non-numeric port returns error",
 			envVars: map[string]string{"ADDRESS": "localhost:notaport"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid STORE_INTERVAL value returns error",
+			envVars: map[string]string{"STORE_INTERVAL": "notanumber"},
 			wantErr: true,
 		},
 	}
@@ -65,29 +153,77 @@ func TestParseServerEnv(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantHost, cfg.Host)
 			assert.Equal(t, tt.wantPort, cfg.Port)
+			assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
+			assert.Equal(t, tt.wantRestore, cfg.Restore)
+			assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
 		})
 	}
 }
 
 func TestParseServerFlags(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantHost string
-		wantPort int
-		wantErr  error
+		name            string
+		args            []string
+		wantHost        string
+		wantPort        int
+		wantStoreInt    int
+		wantRestore     bool
+		wantStoragePath string
+		wantErr         error
 	}{
 		{
-			name:     "no flags preserves defaults",
-			args:     []string{"cmd"},
-			wantHost: Host,
-			wantPort: Port,
+			name:            "no flags preserves defaults",
+			args:            []string{"cmd"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
 		},
 		{
-			name:     "-a flag overrides address",
-			args:     []string{"cmd", "-a", "remotehost:9000"},
-			wantHost: "remotehost",
-			wantPort: 9000,
+			name:            "-a flag overrides address",
+			args:            []string{"cmd", "-a", "remotehost:9000"},
+			wantHost:        "remotehost",
+			wantPort:        9000,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "-i flag overrides store interval",
+			args:            []string{"cmd", "-i", "60"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    60,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "-r flag disables restore",
+			args:            []string{"cmd", "-r=false"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     false,
+			wantStoragePath: FileStoragePath,
+		},
+		{
+			name:            "-f flag overrides file storage path",
+			args:            []string{"cmd", "-f", "/tmp/metrics.json"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: "/tmp/metrics.json",
+		},
+		{
+			name:            "all flags set",
+			args:            []string{"cmd", "-a", "remotehost:9000", "-i", "120", "-r=false", "-f", "/var/metrics.json"},
+			wantHost:        "remotehost",
+			wantPort:        9000,
+			wantStoreInt:    120,
+			wantRestore:     false,
+			wantStoragePath: "/var/metrics.json",
 		},
 		{
 			name:    "unknown positional argument returns error",
@@ -114,6 +250,9 @@ func TestParseServerFlags(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantHost, cfg.Host)
 			assert.Equal(t, tt.wantPort, cfg.Port)
+			assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
+			assert.Equal(t, tt.wantRestore, cfg.Restore)
+			assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
 		})
 	}
 }
