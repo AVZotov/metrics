@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	
+
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
@@ -36,7 +36,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -67,7 +67,7 @@ func (a *Agent) Collect() {
 	a.gauge["Sys"] = float64(stats.Sys)
 	a.gauge["TotalAlloc"] = float64(stats.TotalAlloc)
 	a.gauge["RandomValue"] = rand.Float64()
-	
+
 	a.counter["PollCount"]++
 }
 
@@ -83,14 +83,14 @@ func (a *Agent) Report() error {
 		counter[k] = v
 	}
 	a.mu.Unlock()
-	
+
 	for k, v := range gauge {
 		sv := strconv.FormatFloat(v, 'f', -1, 64)
 		if err := a.sendMetricJSON("gauge", k, sv); err != nil {
 			return err
 		}
 	}
-	
+
 	for k, v := range counter {
 		sv := strconv.FormatInt(v, 10)
 		if err := a.sendMetricJSON("counter", k, sv); err != nil {
@@ -136,7 +136,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 		return err
 	}
 	gz.Close()
-	
+
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
 		return err
@@ -147,6 +147,9 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
 	return nil
 }

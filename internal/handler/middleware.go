@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	
+
 	"go.uber.org/zap"
 )
 
@@ -32,12 +32,7 @@ type responseCompressedWriter struct {
 }
 
 func (w *responseCompressedWriter) Write(b []byte) (int, error) {
-	ct := w.Header().Get("Content-Type")
-	if strings.Contains(ct, "application/json") || strings.Contains(ct, "text/html") {
-		w.Header().Set("Content-Encoding", "gzip")
-		return w.gw.Write(b)
-	}
-	return w.ResponseWriter.Write(b)
+	return w.gw.Write(b)
 }
 
 func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
@@ -80,7 +75,6 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 			func(w http.ResponseWriter, r *http.Request) {
 				cEnc := r.Header.Get("Content-Encoding")
 				aEnc := r.Header.Get("Accept-Encoding")
-				defer r.Body.Close()
 				if strings.Contains(cEnc, "gzip") {
 					gr, err := gzip.NewReader(r.Body)
 					if err != nil {
@@ -91,14 +85,15 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 					r.Body = gr
 				}
 				if strings.Contains(aEnc, "gzip") {
-					gz := gzip.NewWriter(w)
-					defer gz.Close()
+					gw := gzip.NewWriter(w)
+					defer gw.Close()
+					w.Header().Set("Content-Encoding", "gzip")
 					ww := &responseCompressedWriter{
 						responseWriter: responseWriter{
 							ResponseWriter: w,
 							status:         http.StatusOK,
 						},
-						gw: gz,
+						gw: gw,
 					}
 					next.ServeHTTP(ww, r)
 					return

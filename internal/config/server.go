@@ -26,13 +26,13 @@ func NewServerConfig() (*ServerConfig, error) {
 	if err := parseServerEnv(conf); err != nil {
 		return nil, err
 	}
-	if err := validateServetConfig(conf); err != nil {
+	if err := validateServerConfig(conf); err != nil {
 		return nil, err
 	}
 	return conf, nil
 }
 
-func validateServetConfig(conf *ServerConfig) error {
+func validateServerConfig(conf *ServerConfig) error {
 	if conf.FileStoragePath == "" {
 		return errors.New("file storage path cannot be empty")
 	}

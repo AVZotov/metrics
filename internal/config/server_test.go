@@ -3,7 +3,7 @@ package config
 import (
 	"os"
 	"testing"
-
+	
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +12,7 @@ import (
 func TestSetServerDefaults(t *testing.T) {
 	cfg := &ServerConfig{}
 	setServerDefaults(cfg)
-
+	
 	assert.Equal(t, Host, cfg.Host)
 	assert.Equal(t, Port, cfg.Port)
 	assert.Equal(t, StoreInterval, cfg.StoreInterval)
@@ -37,16 +37,18 @@ func TestValidateServerConfig(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
+	
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateServetConfig(&tt.cfg)
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				err := validateServerConfig(&tt.cfg)
+				if tt.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+			},
+		)
 	}
 }
 
@@ -135,28 +137,30 @@ func TestParseServerEnv(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
+	
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for k, v := range tt.envVars {
-				t.Setenv(k, v)
-			}
-
-			cfg := &ServerConfig{}
-			setServerDefaults(cfg)
-			err := parseServerEnv(cfg)
-
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantHost, cfg.Host)
-			assert.Equal(t, tt.wantPort, cfg.Port)
-			assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
-			assert.Equal(t, tt.wantRestore, cfg.Restore)
-			assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				for k, v := range tt.envVars {
+					t.Setenv(k, v)
+				}
+				
+				cfg := &ServerConfig{}
+				setServerDefaults(cfg)
+				err := parseServerEnv(cfg)
+				
+				if tt.wantErr {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantHost, cfg.Host)
+				assert.Equal(t, tt.wantPort, cfg.Port)
+				assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
+				assert.Equal(t, tt.wantRestore, cfg.Restore)
+				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
+			},
+		)
 	}
 }
 
@@ -218,7 +222,9 @@ func TestParseServerFlags(t *testing.T) {
 		},
 		{
 			name:            "all flags set",
-			args:            []string{"cmd", "-a", "remotehost:9000", "-i", "120", "-r=false", "-f", "/var/metrics.json"},
+			args:            []string{
+				"cmd", "-a", "remotehost:9000", "-i", "120", "-r=false", "-f", "/var/metrics.json",
+			},
 			wantHost:        "remotehost",
 			wantPort:        9000,
 			wantStoreInt:    120,
@@ -231,28 +237,30 @@ func TestParseServerFlags(t *testing.T) {
 			wantErr: apperrors.ErrUnknownFlags,
 		},
 	}
-
+	
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resetFlags()
-			origArgs := os.Args
-			os.Args = tt.args
-			defer func() { os.Args = origArgs }()
-
-			cfg := &ServerConfig{}
-			setServerDefaults(cfg)
-			err := parseServerFlags(cfg)
-
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantHost, cfg.Host)
-			assert.Equal(t, tt.wantPort, cfg.Port)
-			assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
-			assert.Equal(t, tt.wantRestore, cfg.Restore)
-			assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				resetFlags()
+				origArgs := os.Args
+				os.Args = tt.args
+				defer func() { os.Args = origArgs }()
+				
+				cfg := &ServerConfig{}
+				setServerDefaults(cfg)
+				err := parseServerFlags(cfg)
+				
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantHost, cfg.Host)
+				assert.Equal(t, tt.wantPort, cfg.Port)
+				assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
+				assert.Equal(t, tt.wantRestore, cfg.Restore)
+				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
+			},
+		)
 	}
 }

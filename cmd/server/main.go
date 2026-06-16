@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
+	"sync"
 	"syscall"
 	"time"
 	
@@ -24,8 +26,9 @@ func main() {
 }
 
 func run() error {
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	wg := sync.WaitGroup{}
 	
 	cfg, err := config.NewServerConfig()
 	if err != nil {
@@ -36,7 +39,7 @@ func run() error {
 		return err
 	}
 	defer logger.Sync()
-	repo, err := initRepo(cfg, done)
+	repo, err := initRepo(ctx, cfg, &wg)
 	if err != nil {
 		return err
 	}
@@ -52,13 +55,14 @@ func run() error {
 			log.Fatal(err)
 		}
 	}()
-	
-	<-done
+	<-ctx.Done()
+	cancel()
+	wg.Wait()
 	log.Println("shutting down...")
 	return nil
 }
 
-func initRepo(cfg *config.ServerConfig, done chan os.Signal) (repository.Repository, error) {
+func initRepo(ctx context.Context, cfg *config.ServerConfig, wg *sync.WaitGroup) (repository.Repository, error) {
 	memStore := repository.NewMemStorage()
 	dir, file := path.Split(cfg.FileStoragePath)
 	if file == "" {
@@ -77,12 +81,17 @@ func initRepo(cfg *config.ServerConfig, done chan os.Signal) (repository.Reposit
 		}
 	}
 	if cfg.StoreInterval > 0 {
-		go func(done chan os.Signal) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			ticker := time.NewTicker(time.Duration(cfg.StoreInterval) * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
-				case <-done:
+				case <-ctx.Done():
+					if err := repo.Dump(); err != nil {
+						log.Println(err)
+					}
 					return
 				case <-ticker.C:
 					if err := repo.Dump(); err != nil {
@@ -90,7 +99,7 @@ func initRepo(cfg *config.ServerConfig, done chan os.Signal) (repository.Reposit
 					}
 				}
 			}
-		}(done)
+		}()
 	}
 	return repo, nil
 }

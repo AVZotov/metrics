@@ -40,7 +40,7 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 		),
 	)
 	defer server.Close()
-	
+
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
 	err := a.Report()
@@ -61,7 +61,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 		),
 	)
 	defer server.Close()
-	
+
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
 	err := a.Report()
@@ -176,6 +176,17 @@ func TestAgent_SendMetricJSON_InvalidCounterValue(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestAgent_SendMetricJSON_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	a := NewAgent(&http.Client{}, server.URL)
+	err := a.sendMetricJSON(models.Gauge, "Alloc", "1.5")
+	assert.Error(t, err)
+}
+
 func TestAgent_SendMetric(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/update/gauge/Alloc/42.5", r.URL.Path)
@@ -200,7 +211,7 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 			want: requests,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		var wg sync.WaitGroup
 		var server *httptest.Server
