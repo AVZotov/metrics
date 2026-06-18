@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -64,11 +64,8 @@ func run() error {
 
 func initRepo(ctx context.Context, cfg *config.ServerConfig, wg *sync.WaitGroup) (repository.Repository, error) {
 	memStore := repository.NewMemStorage()
-	dir, file := path.Split(cfg.FileStoragePath)
-	if file == "" {
-		return nil, errors.New("file name is empty")
-	}
-	dataStore, err := repository.NewDataStore(file, dir)
+	
+	dataStore, err := repository.NewDataStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
 	if err != nil {
 		return nil, err
 	}

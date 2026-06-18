@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
@@ -26,17 +27,10 @@ func NewServerConfig() (*ServerConfig, error) {
 	if err := parseServerEnv(conf); err != nil {
 		return nil, err
 	}
-	if err := validateServerConfig(conf); err != nil {
+	if err := parseFilePath(conf); err != nil {
 		return nil, err
 	}
 	return conf, nil
-}
-
-func validateServerConfig(conf *ServerConfig) error {
-	if conf.FileStoragePath == "" {
-		return errors.New("file storage path cannot be empty")
-	}
-	return nil
 }
 
 func setServerDefaults(s *ServerConfig) {
@@ -67,4 +61,18 @@ func parseServerFlags(config *ServerConfig) error {
 
 func parseServerEnv(cfg *ServerConfig) error {
 	return env.Parse(cfg)
+}
+
+func parseFilePath(cfg *ServerConfig) error {
+	if cfg.FileStoragePath == "" {
+		return errors.New("storage path cannot be empty")
+	}
+	cleaned := filepath.Clean(cfg.FileStoragePath)
+	
+	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
+		return errors.New("path must point to a file, not a directory")
+	}
+	
+	cfg.FileStoragePath = cleaned
+	return nil
 }

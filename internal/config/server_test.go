@@ -2,8 +2,9 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 func TestSetServerDefaults(t *testing.T) {
 	cfg := &ServerConfig{}
 	setServerDefaults(cfg)
-	
+
 	assert.Equal(t, Host, cfg.Host)
 	assert.Equal(t, Port, cfg.Port)
 	assert.Equal(t, StoreInterval, cfg.StoreInterval)
@@ -20,35 +21,63 @@ func TestSetServerDefaults(t *testing.T) {
 	assert.Equal(t, FileStoragePath, cfg.FileStoragePath)
 }
 
-func TestValidateServerConfig(t *testing.T) {
+func TestParseFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
 	tests := []struct {
-		name    string
-		cfg     ServerConfig
-		wantErr bool
+		name      string
+		inputPath string
+		wantPath  string
+		wantErr   bool
 	}{
 		{
-			name:    "valid config",
-			cfg:     ServerConfig{FileStoragePath: "data/metrics.json"},
-			wantErr: false,
+			name:      "empty path returns error",
+			inputPath: "",
+			wantErr:   true,
 		},
 		{
-			name:    "empty file storage path returns error",
-			cfg:     ServerConfig{FileStoragePath: ""},
-			wantErr: true,
+			name:      "existing directory returns error",
+			inputPath: tmpDir,
+			wantErr:   true,
+		},
+		{
+			name:      "simple relative path is unchanged",
+			inputPath: filepath.Join("data", "metrics.json"),
+			wantPath:  filepath.Join("data", "metrics.json"),
+		},
+		{
+			name:      "dot-dot components are resolved",
+			inputPath: filepath.Join("data", "..", "metrics.json"),
+			wantPath:  "metrics.json",
+		},
+		{
+			name:      "redundant separators removed",
+			inputPath: "data" + string(filepath.Separator) + string(filepath.Separator) + "metrics.json",
+			wantPath:  filepath.Join("data", "metrics.json"),
+		},
+		{
+			name:      "trailing separator is removed",
+			inputPath: filepath.Join("data", "metrics.json") + string(filepath.Separator),
+			wantPath:  filepath.Join("data", "metrics.json"),
+		},
+		{
+			name:      "absolute path to non-existing file is accepted",
+			inputPath: filepath.Join(tmpDir, "metrics.json"),
+			wantPath:  filepath.Join(tmpDir, "metrics.json"),
 		},
 	}
-	
+
 	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				err := validateServerConfig(&tt.cfg)
-				if tt.wantErr {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-			},
-		)
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ServerConfig{FileStoragePath: tt.inputPath}
+			err := parseFilePath(cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, cfg.FileStoragePath)
+		})
 	}
 }
 
@@ -137,18 +166,18 @@ func TestParseServerEnv(t *testing.T) {
 			wantErr: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				for k, v := range tt.envVars {
 					t.Setenv(k, v)
 				}
-				
+
 				cfg := &ServerConfig{}
 				setServerDefaults(cfg)
 				err := parseServerEnv(cfg)
-				
+
 				if tt.wantErr {
 					require.Error(t, err)
 					return
@@ -221,8 +250,8 @@ func TestParseServerFlags(t *testing.T) {
 			wantStoragePath: "/tmp/metrics.json",
 		},
 		{
-			name:            "all flags set",
-			args:            []string{
+			name: "all flags set",
+			args: []string{
 				"cmd", "-a", "remotehost:9000", "-i", "120", "-r=false", "-f", "/var/metrics.json",
 			},
 			wantHost:        "remotehost",
@@ -237,7 +266,7 @@ func TestParseServerFlags(t *testing.T) {
 			wantErr: apperrors.ErrUnknownFlags,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -245,11 +274,11 @@ func TestParseServerFlags(t *testing.T) {
 				origArgs := os.Args
 				os.Args = tt.args
 				defer func() { os.Args = origArgs }()
-				
+
 				cfg := &ServerConfig{}
 				setServerDefaults(cfg)
 				err := parseServerFlags(cfg)
-				
+
 				if tt.wantErr != nil {
 					assert.ErrorIs(t, err, tt.wantErr)
 					return
