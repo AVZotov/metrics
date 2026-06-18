@@ -11,7 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -29,7 +29,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	wg := sync.WaitGroup{}
-	
+
 	cfg, err := config.NewServerConfig()
 	if err != nil {
 		return err
@@ -56,15 +56,30 @@ func run() error {
 		}
 	}()
 	<-ctx.Done()
+	shutdownCtx, shutdownCancel := context.WithTimeout(
+		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second)
+	defer shutdownCancel()
+
+	logger.Info("shutting down server...")
+	var shutdownErr error
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error(err.Error())
+		shutdownErr = errors.Join(shutdownErr, err)
+	}
 	cancel()
 	wg.Wait()
-	log.Println("shutting down...")
-	return nil
+	if store, ok := repo.(*repository.Store); ok {
+		if err := store.Dump(); err != nil {
+			logger.Error(err.Error())
+			shutdownErr = errors.Join(shutdownErr, err)
+		}
+	}
+	return shutdownErr
 }
 
 func initRepo(ctx context.Context, cfg *config.ServerConfig, wg *sync.WaitGroup) (repository.Repository, error) {
 	memStore := repository.NewMemStorage()
-	
+
 	dataStore, err := repository.NewDataStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
 	if err != nil {
 		return nil, err
@@ -86,9 +101,6 @@ func initRepo(ctx context.Context, cfg *config.ServerConfig, wg *sync.WaitGroup)
 			for {
 				select {
 				case <-ctx.Done():
-					if err := repo.Dump(); err != nil {
-						log.Println(err)
-					}
 					return
 				case <-ticker.C:
 					if err := repo.Dump(); err != nil {
