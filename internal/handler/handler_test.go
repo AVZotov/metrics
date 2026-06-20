@@ -23,7 +23,7 @@ import (
 type mockService struct {
 	updateFn func(mType, name, value string) error
 	getFn    func(id, mType string) (*models.Metrics, error)
-	getAllFn  func() ([]*models.Metrics, error)
+	getAllFn func() ([]*models.Metrics, error)
 }
 
 func (m *mockService) UpdateMetric(mType, name, value string) error {
@@ -224,7 +224,7 @@ func TestHandler_getValue(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestHandler_getAll(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -706,6 +706,21 @@ func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 	assert.Equal(t, body, string(decompressed))
 }
 
+func TestCompressMiddleware_NoGzipForPlainText(t *testing.T) {
+	body := "plain text response"
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Empty(t, w.Header().Get("Content-Encoding"))
+	assert.Equal(t, body, w.Body.String())
+}
+
 func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 	body := "<html><body>metrics</body></html>"
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -724,4 +739,58 @@ func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, body, string(decompressed))
+}
+
+func TestCompressMiddleware_MultiWrite(t *testing.T) {
+	const expected = "pingpong"
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("ping"))
+		_, _ = w.Write([]byte("pong"))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	gr, err := gzip.NewReader(w.Body)
+	require.NoError(t, err)
+	defer gr.Close()
+	decompressed, err := io.ReadAll(gr)
+	require.NoError(t, err)
+	assert.Equal(t, expected, string(decompressed))
+}
+
+// Test to check Accept-Encoding.
+// Agent not set req.Header.Set("Accept-Encoding", "gzip")
+// http.Client set this header itself
+func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
+	reqBody := `{"id":"cpu","type":"gauge","value":1.5}`
+	respBody := `{"id":"cpu","type":"gauge","value":1.5}`
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = gz.Write([]byte(reqBody))
+	gz.Close()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		require.Equal(t, reqBody, string(b))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(respBody))
+	})
+	mw := CompressMiddleware()(next)
+	req := httptest.NewRequest(http.MethodPost, "/", &buf)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+
+	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
+	gr, err := gzip.NewReader(w.Body)
+	require.NoError(t, err)
+	defer gr.Close()
+	decompressed, err := io.ReadAll(gr)
+	require.NoError(t, err)
+	assert.Equal(t, respBody, string(decompressed))
 }

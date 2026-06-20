@@ -27,12 +27,36 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 }
 
 type responseCompressedWriter struct {
-	responseWriter
-	gw *gzip.Writer
+	http.ResponseWriter
+	gw      *gzip.Writer
+	checked bool
+	enabled bool
+}
+
+func (w *responseCompressedWriter) checkContentType() {
+	if w.checked {
+		return
+	}
+	w.checked = true
+	ct := w.Header().Get("Content-Type")
+	if strings.Contains(ct, "application/json") || strings.Contains(ct, "text/html") {
+		w.gw = gzip.NewWriter(w.ResponseWriter)
+		w.Header().Set("Content-Encoding", "gzip")
+		w.enabled = true
+	}
+}
+
+func (w *responseCompressedWriter) WriteHeader(status int) {
+	w.checkContentType()
+	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *responseCompressedWriter) Write(b []byte) (int, error) {
-	return w.gw.Write(b)
+	w.checkContentType()
+	if w.enabled {
+		return w.gw.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
@@ -85,17 +109,13 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 					r.Body = gr
 				}
 				if strings.Contains(aEnc, "gzip") {
-					gw := gzip.NewWriter(w)
-					defer gw.Close()
-					w.Header().Set("Content-Encoding", "gzip")
-					ww := &responseCompressedWriter{
-						responseWriter: responseWriter{
-							ResponseWriter: w,
-							status:         http.StatusOK,
-						},
-						gw: gw,
-					}
-					next.ServeHTTP(ww, r)
+					cw := &responseCompressedWriter{ResponseWriter: w}
+					defer func() {
+						if cw.gw != nil {
+							cw.gw.Close()
+						}
+					}()
+					next.ServeHTTP(cw, r)
 					return
 				}
 				next.ServeHTTP(w, r)

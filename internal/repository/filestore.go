@@ -6,12 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
 var _ Repository = (*DataStore)(nil)
+var _ BulkSaver = (*DataStore)(nil)
 
 type DataStore struct {
 	name string
@@ -33,7 +34,7 @@ func (d *DataStore) Save(m *models.Metrics) error {
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
-			
+
 		}
 	}
 	var found bool
@@ -89,7 +90,7 @@ func (d *DataStore) GetAll() ([]*models.Metrics, error) {
 		return nil, err
 	}
 	defer file.Close()
-	
+
 	var metrics []*models.Metrics
 	if err = json.NewDecoder(file).Decode(&metrics); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -98,4 +99,19 @@ func (d *DataStore) GetAll() ([]*models.Metrics, error) {
 		return nil, err
 	}
 	return metrics, nil
+}
+
+func (d *DataStore) SaveAll(metrics []*models.Metrics) error {
+	data, err := json.Marshal(metrics)
+	if err != nil {
+		return err
+	}
+	fullPath := filepath.Join(d.path, d.name)
+	file, err := os.Create(fullPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(data)
+	return err
 }

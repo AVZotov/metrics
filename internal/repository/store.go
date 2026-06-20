@@ -1,9 +1,14 @@
 package repository
 
-import models "github.com/AVZotov/metrics/internal/model"
+import (
+	models "github.com/AVZotov/metrics/internal/model"
+)
 
 var _ Repository = (*Store)(nil)
 
+type BulkSaver interface {
+	SaveAll(metrics []*models.Metrics) error
+}
 type Store struct {
 	mem      Repository
 	data     Repository
@@ -37,13 +42,15 @@ func (s *Store) GetAll() ([]*models.Metrics, error) {
 }
 
 func (s *Store) Dump() error {
-	metrics, err := s.mem.GetAll()
+	metrics, err := s.GetAll()
 	if err != nil {
 		return err
 	}
+	if bulkSaver, ok := s.data.(BulkSaver); ok {
+		return bulkSaver.SaveAll(metrics)
+	}
 	for _, m := range metrics {
-		err = s.data.Save(m)
-		if err != nil {
+		if err := s.data.Save(m); err != nil {
 			return err
 		}
 	}
