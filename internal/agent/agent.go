@@ -1,12 +1,17 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"runtime"
 	"strconv"
 	"sync"
+
+	models "github.com/AVZotov/metrics/internal/model"
 )
 
 type Agent struct {
@@ -31,7 +36,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -62,7 +67,7 @@ func (a *Agent) Collect() {
 	a.gauge["Sys"] = float64(stats.Sys)
 	a.gauge["TotalAlloc"] = float64(stats.TotalAlloc)
 	a.gauge["RandomValue"] = rand.Float64()
-	
+
 	a.counter["PollCount"]++
 }
 
@@ -78,17 +83,17 @@ func (a *Agent) Report() error {
 		counter[k] = v
 	}
 	a.mu.Unlock()
-	
+
 	for k, v := range gauge {
 		sv := strconv.FormatFloat(v, 'f', -1, 64)
-		if err := a.sendMetric("gauge", k, sv); err != nil {
+		if err := a.sendMetricJSON("gauge", k, sv); err != nil {
 			return err
 		}
 	}
-	
+
 	for k, v := range counter {
 		sv := strconv.FormatInt(v, 10)
-		if err := a.sendMetric("counter", k, sv); err != nil {
+		if err := a.sendMetricJSON("counter", k, sv); err != nil {
 			return err
 		}
 	}
@@ -102,5 +107,49 @@ func (a *Agent) sendMetric(metricType, name, value string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	return nil
+}
+
+func (a *Agent) sendMetricJSON(metricType, name, value string) error {
+	url := fmt.Sprintf("%s/update", a.baseURL)
+	m := models.Metrics{
+		ID:    name,
+		MType: metricType,
+	}
+	switch metricType {
+	case models.Gauge:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return err
+		}
+		m.Value = &v
+	case models.Counter:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		m.Delta = &v
+	}
+	buf := bytes.NewBuffer(nil)
+	gz := gzip.NewWriter(buf)
+	if err := json.NewEncoder(gz).Encode(m); err != nil {
+		return err
+	}
+	gz.Close()
+
+	req, err := http.NewRequest(http.MethodPost, url, buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
 	return nil
 }

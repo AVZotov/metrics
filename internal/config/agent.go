@@ -4,52 +4,69 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	apperrors "github.com/AVZotov/metrics/internal/errors"
+	"github.com/caarlos0/env/v11"
 )
 
 type AgentConfig struct {
-	Address
-	PollInterval   uint
-	ReportInterval uint
+	Address        `env:"ADDRESS"`
+	PollInterval   uint `env:"POLL_INTERVAL"`
+	ReportInterval uint `env:"REPORT_INTERVAL"`
 }
 
-func NewAgentConfig() *AgentConfig {
+func NewAgentConfig() (*AgentConfig, error) {
 	conf := new(AgentConfig)
-	parseAgentFlags(conf)
 	setAgentDefaults(conf)
-	return conf
+	if err := parseAgentFlags(conf); err != nil {
+		return nil, err
+	}
+	if err := parseAgentEnv(conf); err != nil {
+		return nil, err
+	}
+	if err := validateAgentConfig(conf); err != nil {
+		return nil, err
+	}
+	return conf, nil
 }
 
-func parseAgentFlags(config *AgentConfig) {
-	flag.Var(&config.Address, "a", "address in form host:port")
+func setAgentDefaults(cfg *AgentConfig) {
+	cfg.Host = Host
+	cfg.Port = Port
+	cfg.PollInterval = PollInterval
+	cfg.ReportInterval = ReportInterval
+}
+
+func parseAgentFlags(cfg *AgentConfig) error {
+	flag.Var(&cfg.Address, "a", "address in form host:port")
 	pollInterval := flag.Uint("p", PollInterval, "poll interval in seconds")
 	reportInterval := flag.Uint("r", ReportInterval, "report interval in seconds")
-	
+
 	flag.Parse()
-	
-	config.PollInterval = *pollInterval
-	config.ReportInterval = *reportInterval
-	
+
+	cfg.PollInterval = *pollInterval
+	cfg.ReportInterval = *reportInterval
+
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
 		}
 		flag.Usage()
-		os.Exit(1)
+		return apperrors.ErrUnknownFlags
 	}
+	return nil
 }
 
-func setAgentDefaults(s *AgentConfig) {
-	if s.Host == "" {
-		s.Host = Host
+func parseAgentEnv(cfg *AgentConfig) error {
+	return env.Parse(cfg)
+}
+
+func validateAgentConfig(cfg *AgentConfig) error {
+	if cfg.PollInterval == 0 {
+		return apperrors.ErrInvalidPollInterval
 	}
-	if s.Port == 0 {
-		s.Port = Port
+	if cfg.ReportInterval == 0 {
+		return apperrors.ErrInvalidReportInterval
 	}
-	// this sets defaults if poll or report intervals equals to zero
-	if s.PollInterval == 0 {
-		s.PollInterval = PollInterval
-	}
-	if s.ReportInterval == 0 {
-		s.ReportInterval = ReportInterval
-	}
+	return nil
 }

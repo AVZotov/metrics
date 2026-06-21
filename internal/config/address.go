@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	
+
 	e "github.com/AVZotov/metrics/internal/errors"
 )
 
@@ -33,4 +33,8 @@ func (a *Address) Set(str string) error {
 	}
 	a.Port = p
 	return nil
+}
+
+func (a *Address) UnmarshalText(data []byte) error {
+	return a.Set(string(data))
 }
