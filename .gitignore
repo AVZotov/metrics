@@ -26,5 +26,6 @@ vendor/
 
 # Internal documents
 Docs/
+data/
 
 .task/

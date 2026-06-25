@@ -1,0 +1,9 @@
+services:
+  metrics-db:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/db:/var/lib/postgresql
