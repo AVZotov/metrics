@@ -16,7 +16,7 @@ func deltaPtr(v int64) *int64     { return &v }
 
 func TestNewDataStore(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 	require.NotNil(t, ds)
 	assert.Equal(t, "metrics.json", ds.name)
@@ -26,7 +26,7 @@ func TestNewDataStore(t *testing.T) {
 func TestNewDataStore_CreatesDirectory(t *testing.T) {
 	base := t.TempDir()
 	nested := filepath.Join(base, "a", "b", "c")
-	ds, err := NewDataStore("metrics.json", nested)
+	ds, err := NewFileStore("metrics.json", nested)
 	require.NoError(t, err)
 	require.NotNil(t, ds)
 	_, statErr := os.Stat(nested)
@@ -35,17 +35,17 @@ func TestNewDataStore_CreatesDirectory(t *testing.T) {
 
 func TestDataStore_GetAll_FileNotExist(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
-	_, err = ds.GetAll()
-	require.Error(t, err)
-	assert.True(t, os.IsNotExist(err))
+	got, err := ds.GetAll()
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func TestDataStore_Save_NewMetric(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	m := &models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(42.5)}
@@ -61,7 +61,7 @@ func TestDataStore_Save_NewMetric(t *testing.T) {
 
 func TestDataStore_Save_UpdatesExistingGauge(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	require.NoError(t, ds.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0)}))
@@ -75,7 +75,7 @@ func TestDataStore_Save_UpdatesExistingGauge(t *testing.T) {
 
 func TestDataStore_Save_UpdatesExistingCounter(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	require.NoError(t, ds.Save(&models.Metrics{ID: "hits", MType: models.Counter, Delta: deltaPtr(10)}))
@@ -90,7 +90,7 @@ func TestDataStore_Save_UpdatesExistingCounter(t *testing.T) {
 
 func TestDataStore_Save_AppendsNewMetric(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	require.NoError(t, ds.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0)}))
@@ -103,7 +103,7 @@ func TestDataStore_Save_AppendsNewMetric(t *testing.T) {
 
 func TestDataStore_Save_UpdatesHash(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	require.NoError(t, ds.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0), Hash: "old"}))
@@ -117,7 +117,7 @@ func TestDataStore_Save_UpdatesHash(t *testing.T) {
 
 func TestDataStore_Get(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	require.NoError(t, ds.Save(&models.Metrics{ID: "pi", MType: models.Gauge, Value: gaugePtr(3.14)}))
@@ -170,10 +170,9 @@ func TestDataStore_Get(t *testing.T) {
 
 func TestDataStore_Get_FileNotExist(t *testing.T) {
 	dir := t.TempDir()
-	ds, err := NewDataStore("metrics.json", dir)
+	ds, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	_, err = ds.Get("any", models.Gauge)
-	require.Error(t, err)
-	assert.True(t, os.IsNotExist(err))
+	assert.ErrorIs(t, err, apperrors.ErrNotFound)
 }

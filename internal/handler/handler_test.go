@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -47,19 +48,25 @@ func (m *mockService) GetMetrics() ([]*models.Metrics, error) {
 	return nil, nil
 }
 
-func setupRouterWithService(svc service.Service) chi.Router {
+func (m *mockService) Ping(_ context.Context) error {
+	return nil
+}
+
+func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
 	return NewRouter(h, logger)
 }
 
-func setupRouter() chi.Router {
-	r := repository.NewMemStore()
-	s := service.NewMetricsService(r)
+func setupRouter(t *testing.T) chi.Router {
+	t.Helper()
+	file, err := repository.NewFileStore("metrics.json", t.TempDir())
+	require.NoError(t, err)
+	store := repository.NewStore(repository.NewMemStore(), file, false)
+	s := service.NewMetricsService(store)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	router := NewRouter(h, logger)
-	return router
+	return NewRouter(h, logger)
 }
 
 func TestHandler_update_Counter(t *testing.T) {
@@ -146,7 +153,7 @@ func TestHandler_update_Counter(t *testing.T) {
 			},
 		},
 	}
-	router := setupRouter()
+	router := setupRouter(t)
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -228,7 +235,7 @@ func TestHandler_getValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				router := setupRouter()
+				router := setupRouter(t)
 				if tt.seedURL != "" {
 					req := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
 					req.Header.Add("Content-Type", tt.contentType)
@@ -285,7 +292,7 @@ func TestHandler_getAll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				router := setupRouter()
+				router := setupRouter(t)
 				for _, u := range tt.seedURLs {
 					req := httptest.NewRequest(http.MethodPost, u, nil)
 					req.Header.Add("Content-Type", tt.contentType)
@@ -358,7 +365,7 @@ func TestHandler_updateJSON(t *testing.T) {
 			want:        want{statusCode: http.StatusUnsupportedMediaType},
 		},
 	}
-	router := setupRouter()
+	router := setupRouter(t)
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -449,7 +456,7 @@ func TestHandler_valueJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				router := setupRouter()
+				router := setupRouter(t)
 				if tt.seedURL != "" {
 					seedReq := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
 					seedReq.Header.Set("Content-Type", "text/plain")
@@ -542,7 +549,7 @@ func TestHandler_updateJSON_ResponseBody(t *testing.T) {
 			wantValue: func() *float64 { v := 3.14; return &v }(),
 		},
 	}
-	router := setupRouter()
+	router := setupRouter(t)
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {

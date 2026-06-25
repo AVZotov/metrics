@@ -42,7 +42,7 @@ func TestNewStore(t *testing.T) {
 func TestStore_Save_SyncMode_WritesToData(t *testing.T) {
 	mem := NewMemStore()
 	dir := t.TempDir()
-	data, err := NewDataStore("metrics.json", dir)
+	data, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	s := NewStore(mem, data, true)
@@ -105,7 +105,7 @@ func TestStore_Dump(t *testing.T) {
 	mem.counter["hits"] = models.Metrics{ID: "hits", MType: models.Counter, Delta: deltaPtr(10)}
 
 	dir := t.TempDir()
-	data, err := NewDataStore("metrics.json", dir)
+	data, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 
 	s := NewStore(mem, data, false)
@@ -133,7 +133,7 @@ func TestStore_Dump_DataSaveAllError(t *testing.T) {
 
 func TestStore_Restore(t *testing.T) {
 	dir := t.TempDir()
-	data, err := NewDataStore("metrics.json", dir)
+	data, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 	require.NoError(t, data.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(7.7)}))
 	require.NoError(t, data.Save(&models.Metrics{ID: "reqs", MType: models.Counter, Delta: deltaPtr(3)}))
@@ -155,7 +155,7 @@ func TestStore_Restore_DataGetAllError(t *testing.T) {
 
 func TestStore_Restore_MemSaveError(t *testing.T) {
 	dir := t.TempDir()
-	data, err := NewDataStore("metrics.json", dir)
+	data, err := NewFileStore("metrics.json", dir)
 	require.NoError(t, err)
 	require.NoError(t, data.Save(&models.Metrics{ID: "g", MType: models.Gauge, Value: gaugePtr(1.0)}))
 

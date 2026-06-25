@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
-
+	"time"
+	
 	e "github.com/AVZotov/metrics/internal/errors"
 	"github.com/AVZotov/metrics/internal/handler/templates"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -16,11 +18,11 @@ import (
 )
 
 type Handler struct {
-	service service.Service
+	service service.PersistService
 	logger  *zap.Logger
 }
 
-func New(s service.Service, l *zap.Logger) *Handler {
+func New(s service.PersistService, l *zap.Logger) *Handler {
 	return &Handler{
 		service: s,
 		logger:  l,
@@ -182,4 +184,15 @@ func (h *Handler) valueJSON(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to write response", zap.Error(err))
 		return
 	}
+}
+
+func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second*2)
+	defer cancel()
+	if err := h.service.Ping(ctx); err != nil {
+		h.logger.Error("ping failed", zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

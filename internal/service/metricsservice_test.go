@@ -1,11 +1,12 @@
 package service
 
 import (
+	"context"
 	"testing"
-	
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -19,6 +20,7 @@ type mockRepo struct {
 func (r *mockRepo) Save(m *models.Metrics) error              { return r.saveFn(m) }
 func (r *mockRepo) Get(id, t string) (*models.Metrics, error) { return r.getFn(id, t) }
 func (r *mockRepo) GetAll() ([]*models.Metrics, error)        { return r.getAllFn() }
+func (r *mockRepo) Ping(_ context.Context) error              { return nil }
 
 func TestNewMetricsService(t *testing.T) {
 	repo := &mockRepo{}

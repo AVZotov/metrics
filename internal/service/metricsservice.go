@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/AVZotov/metrics/internal/errors"
@@ -8,13 +9,18 @@ import (
 	"github.com/AVZotov/metrics/internal/repository"
 )
 
-var _ Service = (*MetricsService)(nil)
+var _ PersistService = (*MetricsService)(nil)
 
-type MetricsService struct {
-	repository repository.Repository
+type metricsRepository interface {
+	repository.Repository
+	repository.Pinger
 }
 
-func NewMetricsService(r repository.Repository) *MetricsService {
+type MetricsService struct {
+	repository metricsRepository
+}
+
+func NewMetricsService(r metricsRepository) *MetricsService {
 	return &MetricsService{
 		repository: r,
 	}
@@ -70,6 +76,10 @@ func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {
 
 func (m *MetricsService) GetMetrics() ([]*models.Metrics, error) {
 	return m.repository.GetAll()
+}
+
+func (m *MetricsService) Ping(ctx context.Context) error {
+	return m.repository.Ping(ctx)
 }
 
 func parseInt(s string) (int64, error) {

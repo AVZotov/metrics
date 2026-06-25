@@ -43,7 +43,12 @@ func run() error {
 			logger.Error(err.Error())
 		}
 	}()
-	repo, err := initRepo(ctx, cfg, &wg)
+	mStore := repository.NewMemStore()
+	pStore, err := getPersistStore(cfg)
+	if err != nil {
+		return err
+	}
+	repo, err := initRepo(ctx, cfg, mStore, pStore, &wg)
 	if err != nil {
 		return err
 	}
@@ -86,22 +91,30 @@ func run() error {
 	return shutdownErr
 }
 
+func getPersistStore(cfg *config.ServerConfig) (repository.PersistRepository, error) {
+	switch {
+	case cfg.DSN != "":
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+		defer cancel()
+		return repository.NewDBStore(ctx, cfg.DSN)
+	case cfg.DSN == "" && cfg.FileStoragePath != "":
+		return repository.NewFileStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
+	default:
+		return nil, errors.New("invalid config")
+	}
+}
+
 func initRepo(
 	ctx context.Context,
 	cfg *config.ServerConfig,
+	mStore repository.Repository,
+	pStore repository.PersistRepository,
 	wg *sync.WaitGroup,
 ) (*repository.Store, error) {
-	memStore := repository.NewMemStore()
-	dataStore, err := repository.NewDataStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
-	if err != nil {
-		return nil, err
-	}
-	repo := repository.NewStore(memStore, dataStore, cfg.StoreInterval == 0)
+	repo := repository.NewStore(mStore, pStore, cfg.StoreInterval == 0)
 	if cfg.Restore {
-		if err = repo.Restore(); err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
+		if err := repo.Restore(); err != nil {
+			return nil, err
 		}
 	}
 	if cfg.StoreInterval > 0 {
@@ -122,5 +135,6 @@ func initRepo(
 			}
 		}()
 	}
+	
 	return repo, nil
 }

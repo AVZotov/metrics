@@ -2,7 +2,7 @@ package repository
 
 import (
 	"sync"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -28,7 +28,7 @@ func (m *MemStore) Save(metrics *models.Metrics) error {
 	if metrics == nil {
 		return errors.ErrNilMetric
 	}
-	
+
 	switch metrics.MType {
 	case models.Counter:
 		if metrics.Delta == nil {
