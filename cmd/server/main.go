@@ -11,7 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -29,7 +29,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	wg := sync.WaitGroup{}
-
+	
 	cfg, err := config.NewServerConfig()
 	if err != nil {
 		return err
@@ -38,7 +38,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer logger.Sync()
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			logger.Error(err.Error())
+		}
+	}()
 	repo, err := initRepo(ctx, cfg, &wg)
 	if err != nil {
 		return err
@@ -55,11 +59,13 @@ func run() error {
 			log.Fatal(err)
 		}
 	}()
+	
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(
-		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second)
+		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second,
+	)
 	defer shutdownCancel()
-
+	
 	logger.Info("shutting down server...")
 	var shutdownErr error
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -68,18 +74,24 @@ func run() error {
 	}
 	cancel()
 	wg.Wait()
-	if store, ok := repo.(*repository.Store); ok {
-		if err := store.Dump(); err != nil {
-			logger.Error(err.Error())
-			shutdownErr = errors.Join(shutdownErr, err)
-		}
+	if err := repo.Dump(); err != nil {
+		logger.Error(err.Error())
+		shutdownErr = errors.Join(shutdownErr, err)
 	}
+	if err := repo.Close(); err != nil {
+		logger.Error(err.Error())
+		shutdownErr = errors.Join(shutdownErr, err)
+	}
+	
 	return shutdownErr
 }
 
-func initRepo(ctx context.Context, cfg *config.ServerConfig, wg *sync.WaitGroup) (repository.Repository, error) {
-	memStore := repository.NewMemStorage()
-
+func initRepo(
+	ctx context.Context,
+	cfg *config.ServerConfig,
+	wg *sync.WaitGroup,
+) (*repository.Store, error) {
+	memStore := repository.NewMemStore()
 	dataStore, err := repository.NewDataStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
 	if err != nil {
 		return nil, err

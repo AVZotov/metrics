@@ -7,22 +7,22 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
-var _ Repository = (*MemStorage)(nil)
+var _ Repository = (*MemStore)(nil)
 
-type MemStorage struct {
+type MemStore struct {
 	mu      sync.RWMutex
 	gauge   map[string]models.Metrics
 	counter map[string]models.Metrics
 }
 
-func NewMemStorage() *MemStorage {
-	return &MemStorage{
+func NewMemStore() *MemStore {
+	return &MemStore{
 		gauge:   make(map[string]models.Metrics),
 		counter: make(map[string]models.Metrics),
 	}
 }
 
-func (m *MemStorage) Save(metrics *models.Metrics) error {
+func (m *MemStore) Save(metrics *models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if metrics == nil {
@@ -50,7 +50,7 @@ func (m *MemStorage) Save(metrics *models.Metrics) error {
 	return nil
 }
 
-func (m *MemStorage) Get(id, mType string) (*models.Metrics, error) {
+func (m *MemStore) Get(id, mType string) (*models.Metrics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	switch mType {
@@ -71,7 +71,7 @@ func (m *MemStorage) Get(id, mType string) (*models.Metrics, error) {
 	}
 }
 
-func (m *MemStorage) GetAll() ([]*models.Metrics, error) {
+func (m *MemStore) GetAll() ([]*models.Metrics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]*models.Metrics, 0, len(m.gauge)+len(m.counter))

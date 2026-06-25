@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -10,27 +11,36 @@ import (
 )
 
 type mockRepo struct {
-	saveErr  error
+	saveErr   error
 	getAllRet []*models.Metrics
 	getAllErr error
 }
 
-func (m *mockRepo) Save(_ *models.Metrics) error              { return m.saveErr }
-func (m *mockRepo) Get(_, _ string) (*models.Metrics, error)  { return nil, nil }
-func (m *mockRepo) GetAll() ([]*models.Metrics, error)        { return m.getAllRet, m.getAllErr }
+func (m *mockRepo) Save(_ *models.Metrics) error             { return m.saveErr }
+func (m *mockRepo) Get(_, _ string) (*models.Metrics, error) { return nil, nil }
+func (m *mockRepo) GetAll() ([]*models.Metrics, error)       { return m.getAllRet, m.getAllErr }
+
+type mockPersistRepo struct {
+	mockRepo
+	saveAllErr error
+}
+
+func (m *mockPersistRepo) SaveAll(_ []*models.Metrics) error { return m.saveAllErr }
+func (m *mockPersistRepo) Close() error                      { return nil }
+func (m *mockPersistRepo) Ping(_ context.Context) error      { return nil }
 
 func TestNewStore(t *testing.T) {
-	mem := NewMemStorage()
-	data := NewMemStorage()
+	mem := NewMemStore()
+	data := &mockPersistRepo{}
 	s := NewStore(mem, data, true)
 	require.NotNil(t, s)
 	assert.True(t, s.syncMode)
-	assert.Equal(t, mem, s.mem)
-	assert.Equal(t, data, s.data)
+	assert.Equal(t, mem, s.memStore)
+	assert.Equal(t, data, s.persistStore)
 }
 
 func TestStore_Save_SyncMode_WritesToData(t *testing.T) {
-	mem := NewMemStorage()
+	mem := NewMemStore()
 	dir := t.TempDir()
 	data, err := NewDataStore("metrics.json", dir)
 	require.NoError(t, err)
@@ -45,8 +55,8 @@ func TestStore_Save_SyncMode_WritesToData(t *testing.T) {
 }
 
 func TestStore_Save_AsyncMode_DoesNotWriteToData(t *testing.T) {
-	mem := NewMemStorage()
-	data := NewMemStorage()
+	mem := NewMemStore()
+	data := &mockPersistRepo{}
 	s := NewStore(mem, data, false)
 
 	require.NoError(t, s.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0)}))
@@ -58,18 +68,18 @@ func TestStore_Save_AsyncMode_DoesNotWriteToData(t *testing.T) {
 
 func TestStore_Save_MemError_Propagates(t *testing.T) {
 	sentinel := errors.New("mem save error")
-	s := NewStore(&mockRepo{saveErr: sentinel}, NewMemStorage(), false)
+	s := NewStore(&mockRepo{saveErr: sentinel}, &mockPersistRepo{}, false)
 
 	err := s.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0)})
 	assert.ErrorIs(t, err, sentinel)
 }
 
 func TestStore_Get_DelegatesToMem(t *testing.T) {
-	mem := NewMemStorage()
+	mem := NewMemStore()
 	v := 3.14
 	mem.gauge["pi"] = models.Metrics{ID: "pi", MType: models.Gauge, Value: &v}
 
-	s := NewStore(mem, NewMemStorage(), false)
+	s := NewStore(mem, &mockPersistRepo{}, false)
 	got, err := s.Get("pi", models.Gauge)
 	require.NoError(t, err)
 	require.NotNil(t, got)
@@ -77,20 +87,20 @@ func TestStore_Get_DelegatesToMem(t *testing.T) {
 }
 
 func TestStore_GetAll_DelegatesToMem(t *testing.T) {
-	mem := NewMemStorage()
+	mem := NewMemStore()
 	v := 1.0
 	d := int64(5)
 	mem.gauge["g1"] = models.Metrics{ID: "g1", MType: models.Gauge, Value: &v}
 	mem.counter["c1"] = models.Metrics{ID: "c1", MType: models.Counter, Delta: &d}
 
-	s := NewStore(mem, NewMemStorage(), false)
+	s := NewStore(mem, &mockPersistRepo{}, false)
 	all, err := s.GetAll()
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 }
 
 func TestStore_Dump(t *testing.T) {
-	mem := NewMemStorage()
+	mem := NewMemStore()
 	mem.gauge["cpu"] = models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(42.0)}
 	mem.counter["hits"] = models.Metrics{ID: "hits", MType: models.Counter, Delta: deltaPtr(10)}
 
@@ -108,16 +118,16 @@ func TestStore_Dump(t *testing.T) {
 
 func TestStore_Dump_MemGetAllError(t *testing.T) {
 	sentinel := errors.New("getall error")
-	s := NewStore(&mockRepo{getAllErr: sentinel}, NewMemStorage(), false)
+	s := NewStore(&mockRepo{getAllErr: sentinel}, &mockPersistRepo{}, false)
 	assert.ErrorIs(t, s.Dump(), sentinel)
 }
 
-func TestStore_Dump_DataSaveError(t *testing.T) {
-	mem := NewMemStorage()
+func TestStore_Dump_DataSaveAllError(t *testing.T) {
+	mem := NewMemStore()
 	mem.gauge["g"] = models.Metrics{ID: "g", MType: models.Gauge, Value: gaugePtr(1.0)}
 
-	sentinel := errors.New("data save error")
-	s := NewStore(mem, &mockRepo{saveErr: sentinel}, false)
+	sentinel := errors.New("data saveall error")
+	s := NewStore(mem, &mockPersistRepo{saveAllErr: sentinel}, false)
 	assert.ErrorIs(t, s.Dump(), sentinel)
 }
 
@@ -128,7 +138,7 @@ func TestStore_Restore(t *testing.T) {
 	require.NoError(t, data.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(7.7)}))
 	require.NoError(t, data.Save(&models.Metrics{ID: "reqs", MType: models.Counter, Delta: deltaPtr(3)}))
 
-	mem := NewMemStorage()
+	mem := NewMemStore()
 	s := NewStore(mem, data, false)
 	require.NoError(t, s.Restore())
 
@@ -139,7 +149,7 @@ func TestStore_Restore(t *testing.T) {
 
 func TestStore_Restore_DataGetAllError(t *testing.T) {
 	sentinel := errors.New("data getall error")
-	s := NewStore(NewMemStorage(), &mockRepo{getAllErr: sentinel}, false)
+	s := NewStore(NewMemStore(), &mockPersistRepo{mockRepo: mockRepo{getAllErr: sentinel}}, false)
 	assert.ErrorIs(t, s.Restore(), sentinel)
 }
 

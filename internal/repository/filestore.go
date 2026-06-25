@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,8 +12,7 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
-var _ Repository = (*DataStore)(nil)
-var _ BulkSaver = (*DataStore)(nil)
+var _ PersistRepository = (*DataStore)(nil)
 
 type DataStore struct {
 	name string
@@ -34,7 +34,6 @@ func (d *DataStore) Save(m *models.Metrics) error {
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
-
 		}
 	}
 	var found bool
@@ -114,4 +113,12 @@ func (d *DataStore) SaveAll(metrics []*models.Metrics) error {
 	defer file.Close()
 	_, err = file.Write(data)
 	return err
+}
+
+func (d *DataStore) Close() error {
+	return nil
+}
+
+func (d *DataStore) Ping(_ context.Context) error {
+	return nil
 }

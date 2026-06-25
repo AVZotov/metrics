@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
+	
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -54,7 +54,7 @@ func setupRouterWithService(svc service.Service) chi.Router {
 }
 
 func setupRouter() chi.Router {
-	r := repository.NewMemStorage()
+	r := repository.NewMemStore()
 	s := service.NewMetricsService(r)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
@@ -224,7 +224,7 @@ func TestHandler_getValue(t *testing.T) {
 			},
 		},
 	}
-
+	
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestHandler_getAll(t *testing.T) {
 			},
 		},
 	}
-
+	
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -360,16 +360,18 @@ func TestHandler_updateJSON(t *testing.T) {
 	}
 	router := setupRouter()
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", tt.contentType)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			assert.Equal(t, tt.want.statusCode, w.Code)
-			if tt.want.contentType != "" {
-				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
-			}
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", tt.contentType)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				assert.Equal(t, tt.want.statusCode, w.Code)
+				if tt.want.contentType != "" {
+					assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
+				}
+			},
+		)
 	}
 }
 
@@ -394,14 +396,18 @@ func TestHandler_valueJSON(t *testing.T) {
 			contentType: "application/json",
 			seedURL:     "/update/counter/myCounter/42",
 			body:        `{"id":"myCounter","type":"counter"}`,
-			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyDelta: &delta42},
+			want:        want{
+				statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyDelta: &delta42,
+			},
 		},
 		{
 			name:        "gauge existing",
 			contentType: "application/json",
 			seedURL:     "/update/gauge/myGauge/3.14",
 			body:        `{"id":"myGauge","type":"gauge"}`,
-			want:        want{statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyValue: &value314},
+			want:        want{
+				statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyValue: &value314,
+			},
 		},
 		{
 			name:        "counter not found",
@@ -441,39 +447,43 @@ func TestHandler_valueJSON(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			router := setupRouter()
-			if tt.seedURL != "" {
-				seedReq := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
-				seedReq.Header.Set("Content-Type", "text/plain")
-				router.ServeHTTP(httptest.NewRecorder(), seedReq)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/value", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", tt.contentType)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			assert.Equal(t, tt.want.statusCode, w.Code)
-			if tt.want.contentType != "" {
-				assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
-			}
-			if tt.want.bodyDelta != nil || tt.want.bodyValue != nil {
-				var got models.Metrics
-				assert.NoError(t, json.NewDecoder(w.Body).Decode(&got))
-				if tt.want.bodyDelta != nil {
-					assert.Equal(t, *tt.want.bodyDelta, *got.Delta)
+		t.Run(
+			tt.name, func(t *testing.T) {
+				router := setupRouter()
+				if tt.seedURL != "" {
+					seedReq := httptest.NewRequest(http.MethodPost, tt.seedURL, nil)
+					seedReq.Header.Set("Content-Type", "text/plain")
+					router.ServeHTTP(httptest.NewRecorder(), seedReq)
 				}
-				if tt.want.bodyValue != nil {
-					assert.Equal(t, *tt.want.bodyValue, *got.Value)
+				req := httptest.NewRequest(http.MethodPost, "/value", strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", tt.contentType)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				assert.Equal(t, tt.want.statusCode, w.Code)
+				if tt.want.contentType != "" {
+					assert.Equal(t, tt.want.contentType, w.Header().Get("Content-Type"))
 				}
-			}
-		})
+				if tt.want.bodyDelta != nil || tt.want.bodyValue != nil {
+					var got models.Metrics
+					assert.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+					if tt.want.bodyDelta != nil {
+						assert.Equal(t, *tt.want.bodyDelta, *got.Delta)
+					}
+					if tt.want.bodyValue != nil {
+						assert.Equal(t, *tt.want.bodyValue, *got.Value)
+					}
+				}
+			},
+		)
 	}
 }
 
 func TestContentTypeMiddleware(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+	)
 	tests := []struct {
 		name        string
 		contentType string
@@ -502,13 +512,15 @@ func TestContentTypeMiddleware(t *testing.T) {
 	}
 	mw := ContentTypeMiddleware("application/json")(next)
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/", nil)
-			req.Header.Set("Content-Type", tt.contentType)
-			w := httptest.NewRecorder()
-			mw.ServeHTTP(w, req)
-			assert.Equal(t, tt.wantStatus, w.Code)
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/", nil)
+				req.Header.Set("Content-Type", tt.contentType)
+				w := httptest.NewRecorder()
+				mw.ServeHTTP(w, req)
+				assert.Equal(t, tt.wantStatus, w.Code)
+			},
+		)
 	}
 }
 
@@ -532,23 +544,25 @@ func TestHandler_updateJSON_ResponseBody(t *testing.T) {
 	}
 	router := setupRouter()
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code)
-			var got models.Metrics
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
-			if tt.wantDelta != nil {
-				require.NotNil(t, got.Delta)
-				assert.Equal(t, *tt.wantDelta, *got.Delta)
-			}
-			if tt.wantValue != nil {
-				require.NotNil(t, got.Value)
-				assert.Equal(t, *tt.wantValue, *got.Value)
-			}
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				require.Equal(t, http.StatusOK, w.Code)
+				var got models.Metrics
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+				if tt.wantDelta != nil {
+					require.NotNil(t, got.Delta)
+					assert.Equal(t, *tt.wantDelta, *got.Delta)
+				}
+				if tt.wantValue != nil {
+					require.NotNil(t, got.Value)
+					assert.Equal(t, *tt.wantValue, *got.Value)
+				}
+			},
+		)
 	}
 }
 
@@ -566,13 +580,15 @@ func TestHandler_updateJSON_ServiceError_Returns500(t *testing.T) {
 		{"gauge service error", `{"id":"temp","type":"gauge","value":1.5}`},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusInternalServerError, w.Code)
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				assert.Equal(t, http.StatusInternalServerError, w.Code)
+			},
+		)
 	}
 }
 
@@ -626,10 +642,12 @@ func TestHandler_valueJSON_ServiceInternalError_Returns500(t *testing.T) {
 }
 
 func TestLoggingMiddleware(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte("hello"))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("hello"))
+		},
+	)
 	logger, _ := zap.NewDevelopment()
 	mw := LoggingMiddleware(logger)(next)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -640,9 +658,11 @@ func TestLoggingMiddleware(t *testing.T) {
 }
 
 func TestCompressMiddleware_Passthrough(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("pong"))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("pong"))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -653,9 +673,11 @@ func TestCompressMiddleware_Passthrough(t *testing.T) {
 }
 
 func TestCompressMiddleware_InvalidGzipBody(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not gzip at all"))
 	req.Header.Set("Content-Encoding", "gzip")
@@ -670,13 +692,15 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(payload))
 	gz.Close()
-
+	
 	var gotBody string
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		w.WriteHeader(http.StatusOK)
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.WriteHeader(http.StatusOK)
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
@@ -688,10 +712,12 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 
 func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 	body := `{"id":"cpu","type":"gauge","value":1.5}`
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -708,10 +734,12 @@ func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 
 func TestCompressMiddleware_NoGzipForPlainText(t *testing.T) {
 	body := "plain text response"
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(body))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(body))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -723,10 +751,12 @@ func TestCompressMiddleware_NoGzipForPlainText(t *testing.T) {
 
 func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 	body := "<html><body>metrics</body></html>"
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(body))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(body))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -743,11 +773,13 @@ func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 
 func TestCompressMiddleware_MultiWrite(t *testing.T) {
 	const expected = "pingpong"
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("ping"))
-		_, _ = w.Write([]byte("pong"))
-	})
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("ping"))
+			_, _ = w.Write([]byte("pong"))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -767,25 +799,27 @@ func TestCompressMiddleware_MultiWrite(t *testing.T) {
 func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	reqBody := `{"id":"cpu","type":"gauge","value":1.5}`
 	respBody := `{"id":"cpu","type":"gauge","value":1.5}`
-
+	
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(reqBody))
 	gz.Close()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		require.Equal(t, reqBody, string(b))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(respBody))
-	})
+	
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			require.Equal(t, reqBody, string(b))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(respBody))
+		},
+	)
 	mw := CompressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
-
+	
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)
