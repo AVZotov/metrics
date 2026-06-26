@@ -81,6 +81,41 @@ func TestParseFilePath(t *testing.T) {
 	}
 }
 
+func TestValidateDSN(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     ServerConfig
+		wantErr bool
+	}{
+		{
+			name:    "DSN not provided - no error",
+			cfg:     ServerConfig{DSNSet: false, DSN: ""},
+			wantErr: false,
+		},
+		{
+			name:    "DSN explicitly set but empty - error",
+			cfg:     ServerConfig{DSNSet: true, DSN: ""},
+			wantErr: true,
+		},
+		{
+			name:    "DSN set with value - no error",
+			cfg:     ServerConfig{DSNSet: true, DSN: "postgres://user:pass@localhost/db"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDSN(&tt.cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestParseServerEnv(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -90,6 +125,8 @@ func TestParseServerEnv(t *testing.T) {
 		wantStoreInt    int
 		wantRestore     bool
 		wantStoragePath string
+		wantDSNSet      bool
+		wantDSN         string
 		wantErr         bool
 	}{
 		{
@@ -165,6 +202,28 @@ func TestParseServerEnv(t *testing.T) {
 			envVars: map[string]string{"STORE_INTERVAL": "notanumber"},
 			wantErr: true,
 		},
+		{
+			name:            "DATABASE_DSN set but empty marks DSNSet true",
+			envVars:         map[string]string{"DATABASE_DSN": ""},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+			wantDSNSet:      true,
+			wantDSN:         "",
+		},
+		{
+			name:            "DATABASE_DSN set with value marks DSNSet true",
+			envVars:         map[string]string{"DATABASE_DSN": "postgres://user:pass@localhost/db"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+			wantDSNSet:      true,
+			wantDSN:         "postgres://user:pass@localhost/db",
+		},
 	}
 
 	for _, tt := range tests {
@@ -188,6 +247,8 @@ func TestParseServerEnv(t *testing.T) {
 				assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
 				assert.Equal(t, tt.wantRestore, cfg.Restore)
 				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
+				assert.Equal(t, tt.wantDSNSet, cfg.DSNSet)
+				assert.Equal(t, tt.wantDSN, cfg.DSN)
 			},
 		)
 	}
@@ -202,6 +263,8 @@ func TestParseServerFlags(t *testing.T) {
 		wantStoreInt    int
 		wantRestore     bool
 		wantStoragePath string
+		wantDSNSet      bool
+		wantDSN         string
 		wantErr         error
 	}{
 		{
@@ -265,6 +328,28 @@ func TestParseServerFlags(t *testing.T) {
 			args:    []string{"cmd", "unknownarg"},
 			wantErr: apperrors.ErrUnknownFlags,
 		},
+		{
+			name:            "-d flag with empty value marks DSNSet true",
+			args:            []string{"cmd", "-d", ""},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+			wantDSNSet:      true,
+			wantDSN:         "",
+		},
+		{
+			name:            "-d flag with value marks DSNSet true",
+			args:            []string{"cmd", "-d", "postgres://user:pass@localhost/db"},
+			wantHost:        Host,
+			wantPort:        Port,
+			wantStoreInt:    StoreInterval,
+			wantRestore:     Restore,
+			wantStoragePath: FileStoragePath,
+			wantDSNSet:      true,
+			wantDSN:         "postgres://user:pass@localhost/db",
+		},
 	}
 
 	for _, tt := range tests {
@@ -289,6 +374,8 @@ func TestParseServerFlags(t *testing.T) {
 				assert.Equal(t, tt.wantStoreInt, cfg.StoreInterval)
 				assert.Equal(t, tt.wantRestore, cfg.Restore)
 				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
+				assert.Equal(t, tt.wantDSNSet, cfg.DSNSet)
+				assert.Equal(t, tt.wantDSN, cfg.DSN)
 			},
 		)
 	}
