@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 const (
 	Host                      = "localhost"
 	Port                      = 8080
@@ -9,4 +11,5 @@ const (
 	FileStoragePath           = "data/metrics.json"
 	Restore                   = true
 	ServerShutdownGracePeriod = 1
+	DBConnectTimeout          = 2 * time.Second
 )

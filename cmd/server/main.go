@@ -94,13 +94,13 @@ func run() error {
 func getPersistStore(cfg *config.ServerConfig) (repository.PersistRepository, error) {
 	switch {
 	case cfg.DSNSet:
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.DB.ConnectTimeout)
 		defer cancel()
 		return repository.NewDBStore(ctx, cfg.DSN)
-	case !cfg.DSNSet && cfg.FileStoragePath != "":
+	case cfg.FileStoragePath != "":
 		return repository.NewFileStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
 	default:
-		return nil, errors.New("invalid config")
+		return repository.NewNoopStore(), nil
 	}
 }
 

@@ -31,9 +31,9 @@ func TestParseFilePath(t *testing.T) {
 		wantErr   bool
 	}{
 		{
-			name:      "empty path returns error",
+			name:      "empty path is allowed (mem-only mode)",
 			inputPath: "",
-			wantErr:   true,
+			wantPath:  "",
 		},
 		{
 			name:      "existing directory returns error",

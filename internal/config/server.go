@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	dbcfg "github.com/AVZotov/metrics/internal/config/db"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
 )
@@ -19,6 +20,7 @@ type ServerConfig struct {
 	ShutdownGracePeriod uint
 	DSN                 string `env:"DATABASE_DSN"`
 	DSNSet              bool
+	DB                  dbcfg.Config
 }
 
 func NewServerConfig() (*ServerConfig, error) {
@@ -46,6 +48,7 @@ func setServerDefaults(s *ServerConfig) {
 	s.Restore = Restore
 	s.FileStoragePath = FileStoragePath
 	s.ShutdownGracePeriod = ServerShutdownGracePeriod
+	s.DB = dbcfg.Config{ConnectTimeout: DBConnectTimeout}
 }
 
 func parseServerFlags(config *ServerConfig) error {
@@ -82,7 +85,7 @@ func parseServerEnv(cfg *ServerConfig) error {
 
 func parseFilePath(cfg *ServerConfig) error {
 	if cfg.FileStoragePath == "" {
-		return errors.New("storage path cannot be empty")
+		return nil
 	}
 	cleaned := filepath.Clean(cfg.FileStoragePath)
 
