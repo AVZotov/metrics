@@ -2,8 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 
+	"github.com/AVZotov/metrics/internal/config/db"
+	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -11,9 +15,10 @@ var _ PersistRepository = (*DBStore)(nil)
 
 type DBStore struct {
 	pool *pgxpool.Pool
+	cfg  *db.Config
 }
 
-func NewDBStore(ctx context.Context, dsn string) (*DBStore, error) {
+func NewDBStore(ctx context.Context, dsn string, cfg *db.Config) (*DBStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, err
@@ -23,23 +28,101 @@ func NewDBStore(ctx context.Context, dsn string) (*DBStore, error) {
 	}
 	return &DBStore{
 		pool: pool,
+		cfg:  cfg,
 	}, nil
 }
 
 func (d *DBStore) Save(metrics *models.Metrics) error {
-	panic("implement me")
+	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.ConnectTimeout)
+	defer cancel()
+	query := `INSERT INTO metrics (id, mtype, delta, value)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (id, mtype)
+			DO UPDATE SET delta = EXCLUDED.delta, value = EXCLUDED.value`
+	_, err := d.pool.Exec(ctx, query, metrics.ID, metrics.MType, metrics.Delta, metrics.Value)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (d *DBStore) Get(id, mType string) (*models.Metrics, error) {
-	panic("implement me")
+	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.ConnectTimeout)
+	defer cancel()
+	query := `SELECT id, mtype, delta, value, hash FROM metrics WHERE id = $1 AND mtype = $2`
+
+	m := &models.Metrics{}
+	var hash *string
+	if err := d.pool.QueryRow(ctx, query, id, mType).Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &hash); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperrors.ErrNotFound
+		}
+		return nil, err
+	}
+	if hash != nil {
+		m.Hash = *hash
+	}
+	return m, nil
 }
 
 func (d *DBStore) GetAll() ([]*models.Metrics, error) {
-	return nil, nil
+	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.ConnectTimeout)
+	defer cancel()
+
+	query := `SELECT id, mtype, delta, value, hash FROM metrics`
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	metrics, err := pgx.CollectRows(
+		rows, func(row pgx.CollectableRow) (*models.Metrics, error) {
+			m := &models.Metrics{}
+			var hash *string
+			if err := row.Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &hash); err != nil {
+				return nil, err
+			}
+			if hash != nil {
+				m.Hash = *hash
+			}
+
+			return m, nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return metrics, nil
 }
 
 func (d *DBStore) SaveAll(metrics []*models.Metrics) error {
-	panic("implement me")
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.ConnectTimeout)
+	defer cancel()
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	query := `INSERT INTO metrics (id, mtype, delta, value)
+              VALUES ($1, $2, $3, $4)
+              ON CONFLICT (id, mtype)
+              DO UPDATE SET delta = EXCLUDED.delta, value = EXCLUDED.value`
+
+	batch := &pgx.Batch{}
+	for _, m := range metrics {
+		batch.Queue(query, m.ID, m.MType, m.Delta, m.Value)
+	}
+
+	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (d *DBStore) Close() error {

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -29,7 +29,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	wg := sync.WaitGroup{}
-
+	
 	cfg, err := config.NewServerConfig()
 	if err != nil {
 		return err
@@ -64,13 +64,13 @@ func run() error {
 			log.Fatal(err)
 		}
 	}()
-
+	
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(
 		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second,
 	)
 	defer shutdownCancel()
-
+	
 	logger.Info("shutting down server...")
 	var shutdownErr error
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -87,7 +87,7 @@ func run() error {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-
+	
 	return shutdownErr
 }
 
@@ -96,7 +96,10 @@ func getPersistStore(cfg *config.ServerConfig) (repository.PersistRepository, er
 	case cfg.DSNSet:
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.DB.ConnectTimeout)
 		defer cancel()
-		return repository.NewDBStore(ctx, cfg.DSN)
+		if err := repository.RunMigrations(ctx, cfg.DSN); err != nil {
+			return nil, err
+		}
+		return repository.NewDBStore(ctx, cfg.DSN, &cfg.DB)
 	case cfg.FileStoragePath != "":
 		return repository.NewFileStore(filepath.Base(cfg.FileStoragePath), filepath.Dir(cfg.FileStoragePath))
 	default:
@@ -135,6 +138,6 @@ func initRepo(
 			}
 		}()
 	}
-
+	
 	return repo, nil
 }

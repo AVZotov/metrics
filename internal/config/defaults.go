@@ -12,4 +12,5 @@ const (
 	Restore                   = true
 	ServerShutdownGracePeriod = 1
 	DBConnectTimeout          = 2 * time.Second
+	DBQueryTimeout            = 2 * time.Second
 )
