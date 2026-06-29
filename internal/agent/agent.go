@@ -75,11 +75,11 @@ func (a *Agent) Report() error {
 	a.mu.Lock()
 	metrics := toMetricsSlice(a.gauge, a.counter)
 	a.mu.Unlock()
-
-	if err := a.sendMetricsJSON(metrics); err != nil {
-		return err
+	if len(metrics) != 0 {
+		if err := a.sendMetricsJSON(metrics); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
@@ -118,7 +118,9 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if err := json.NewEncoder(gz).Encode(m); err != nil {
 		return err
 	}
-	gz.Close()
+	if err := gz.Close(); err != nil {
+		return err
+	}
 
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
@@ -144,7 +146,9 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	if err := json.NewEncoder(gz).Encode(metrics); err != nil {
 		return err
 	}
-	gz.Close()
+	if err := gz.Close(); err != nil {
+		return err
+	}
 
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
