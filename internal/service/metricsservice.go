@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"strconv"
-
+	
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -30,24 +30,24 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 	if name == "" {
 		return errors.ErrEmptyMetricName
 	}
-
+	
 	if metricType == "" {
 		return errors.ErrEmptyMetricType
 	}
-
+	
 	if metricType != models.Counter && metricType != models.Gauge {
 		return errors.ErrUnknownMetricType
 	}
-
+	
 	if value == "" {
 		return errors.ErrEmptyMetricValue
 	}
-
+	
 	metrics := &models.Metrics{
 		ID:    name,
 		MType: metricType,
 	}
-
+	
 	switch metrics.MType {
 	case models.Counter:
 		v, err := parseInt(value)
@@ -62,12 +62,36 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 		}
 		metrics.Value = &v
 	}
-
+	
 	if err := m.repository.Save(metrics); err != nil {
 		return err
 	}
-
+	
 	return nil
+}
+
+func (m *MetricsService) UpdateMetrics(metrics []models.Metrics) error {
+	toSave := make([]*models.Metrics, 0, len(metrics))
+	for i := range metrics {
+		mm := metrics[i]
+		
+		if mm.ID == "" {
+			return errors.ErrEmptyMetricName
+		}
+		if mm.MType != models.Counter && mm.MType != models.Gauge {
+			return errors.ErrUnknownMetricType
+		}
+		if mm.MType == models.Counter && mm.Delta == nil {
+			return errors.ErrEmptyMetricValue
+		}
+		if mm.MType == models.Gauge && mm.Value == nil {
+			return errors.ErrEmptyMetricValue
+		}
+		
+		toSave = append(toSave, &mm)
+	}
+	
+	return m.repository.SaveAll(toSave)
 }
 
 func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {

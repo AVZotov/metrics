@@ -11,12 +11,14 @@ import (
 )
 
 type mockRepo struct {
-	saveErr   error
-	getAllRet []*models.Metrics
-	getAllErr error
+	saveErr    error
+	saveAllErr error
+	getAllRet  []*models.Metrics
+	getAllErr  error
 }
 
 func (m *mockRepo) Save(_ *models.Metrics) error             { return m.saveErr }
+func (m *mockRepo) SaveAll(_ []*models.Metrics) error        { return m.saveAllErr }
 func (m *mockRepo) Get(_, _ string) (*models.Metrics, error) { return nil, nil }
 func (m *mockRepo) GetAll() ([]*models.Metrics, error)       { return m.getAllRet, m.getAllErr }
 
@@ -71,6 +73,43 @@ func TestStore_Save_MemError_Propagates(t *testing.T) {
 	s := NewStore(&mockRepo{saveErr: sentinel}, &mockPersistRepo{}, false)
 
 	err := s.Save(&models.Metrics{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.0)})
+	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestStore_SaveAll_AsyncMode(t *testing.T) {
+	mem := NewMemStore()
+	s := NewStore(mem, &mockPersistRepo{}, false)
+	metrics := []*models.Metrics{
+		{ID: "cpu", MType: models.Gauge, Value: gaugePtr(1.5)},
+		{ID: "hits", MType: models.Counter, Delta: deltaPtr(10)},
+	}
+	require.NoError(t, s.SaveAll(metrics))
+	got, err := mem.GetAll()
+	require.NoError(t, err)
+	assert.Len(t, got, 2)
+}
+
+func TestStore_SaveAll_SyncMode_Dumps(t *testing.T) {
+	mem := NewMemStore()
+	dir := t.TempDir()
+	data, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+
+	s := NewStore(mem, data, true)
+	metrics := []*models.Metrics{
+		{ID: "cpu", MType: models.Gauge, Value: gaugePtr(9.9)},
+	}
+	require.NoError(t, s.SaveAll(metrics))
+
+	got, err := data.Get("cpu", models.Gauge)
+	require.NoError(t, err)
+	assert.Equal(t, 9.9, *got.Value)
+}
+
+func TestStore_SaveAll_MemError_Propagates(t *testing.T) {
+	sentinel := errors.New("mem saveall error")
+	s := NewStore(&mockRepo{saveAllErr: sentinel}, &mockPersistRepo{}, false)
+	err := s.SaveAll([]*models.Metrics{{ID: "x", MType: models.Gauge, Value: gaugePtr(1.0)}})
 	assert.ErrorIs(t, err, sentinel)
 }
 

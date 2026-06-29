@@ -34,6 +34,16 @@ func (s *Store) Save(m *models.Metrics) error {
 	return nil
 }
 
+func (s *Store) SaveAll(metrics []*models.Metrics) error {
+	if err := s.memStore.SaveAll(metrics); err != nil {
+		return err
+	}
+	if s.syncMode {
+		return s.Dump()
+	}
+	return nil
+}
+
 func (s *Store) Get(id, mType string) (*models.Metrics, error) {
 	return s.memStore.Get(id, mType)
 }

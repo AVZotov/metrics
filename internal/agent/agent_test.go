@@ -47,7 +47,8 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, len(gMetrics)+len(cMetrics), counter)
+	// All metrics are sent in a single batch request to /updates/
+	assert.Equal(t, 1, counter)
 }
 
 func TestAgent_Report_Metrics_ContentType(t *testing.T) {
@@ -112,9 +113,9 @@ func TestAgent_Report_URL(t *testing.T) {
 	a.Collect()
 	require.NoError(t, a.Report())
 
-	for _, p := range gotPaths {
-		assert.Equal(t, "/update", p)
-	}
+	// All metrics are sent as a single batch to /updates/
+	require.Len(t, gotPaths, 1)
+	assert.Equal(t, "/updates/", gotPaths[0])
 }
 
 func TestAgent_Report_Body_Gauge(t *testing.T) {
@@ -126,12 +127,12 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 			return
 		}
 		defer gz.Close()
-		var m models.Metrics
-		if err := json.NewDecoder(gz).Decode(&m); err != nil {
+		var batch []models.Metrics
+		if err := json.NewDecoder(gz).Decode(&batch); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		received = append(received, m)
+		received = append(received, batch...)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

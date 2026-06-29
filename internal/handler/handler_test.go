@@ -22,14 +22,22 @@ import (
 )
 
 type mockService struct {
-	updateFn func(mType, name, value string) error
-	getFn    func(id, mType string) (*models.Metrics, error)
-	getAllFn func() ([]*models.Metrics, error)
+	updateFn        func(mType, name, value string) error
+	updateMetricsFn func([]models.Metrics) error
+	getFn           func(id, mType string) (*models.Metrics, error)
+	getAllFn         func() ([]*models.Metrics, error)
 }
 
 func (m *mockService) UpdateMetric(mType, name, value string) error {
 	if m.updateFn != nil {
 		return m.updateFn(mType, name, value)
+	}
+	return nil
+}
+
+func (m *mockService) UpdateMetrics(metrics []models.Metrics) error {
+	if m.updateMetricsFn != nil {
+		return m.updateMetricsFn(metrics)
 	}
 	return nil
 }
@@ -803,6 +811,93 @@ func TestCompressMiddleware_MultiWrite(t *testing.T) {
 // Test to check Accept-Encoding.
 // Agent not set req.Header.Set("Accept-Encoding", "gzip")
 // http.Client set this header itself
+func TestHandler_updatesJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{
+			name: "valid batch counter and gauge",
+			body: `[{"id":"hits","type":"counter","delta":5},{"id":"temp","type":"gauge","value":3.14}]`,
+			want: http.StatusOK,
+		},
+		{
+			name: "invalid json",
+			body: `not json`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "unknown type in batch",
+			body: `[{"id":"x","type":"unknown","delta":1}]`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "counter missing delta",
+			body: `[{"id":"x","type":"counter"}]`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "gauge missing value",
+			body: `[{"id":"x","type":"gauge"}]`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "empty id",
+			body: `[{"id":"","type":"counter","delta":1}]`,
+			want: http.StatusBadRequest,
+		},
+	}
+	router := setupRouter(t)
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				assert.Equal(t, tt.want, w.Code)
+			},
+		)
+	}
+}
+
+func TestHandler_updatesJSON_WrongContentType(t *testing.T) {
+	router := setupRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(`[]`))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
+}
+
+func TestHandler_updatesJSON_ServiceError(t *testing.T) {
+	sentinel := errors.New("storage failure")
+	svc := &mockService{
+		updateMetricsFn: func([]models.Metrics) error { return sentinel },
+	}
+	router := setupRouterWithService(svc)
+	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(`[{"id":"x","type":"counter","delta":1}]`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandler_updatesJSON_ResponseBody(t *testing.T) {
+	body := `[{"id":"hits","type":"counter","delta":42},{"id":"temp","type":"gauge","value":3.14}]`
+	router := setupRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+	var got []models.Metrics
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+	assert.Len(t, got, 2)
+}
+
 func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	reqBody := `{"id":"cpu","type":"gauge","value":1.5}`
 	respBody := `{"id":"cpu","type":"gauge","value":1.5}`

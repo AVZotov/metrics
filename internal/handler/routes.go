@@ -26,6 +26,8 @@ func register(mux *chi.Mux, h *Handler) {
 			mux.Post("/update/", h.updateJSON)
 			mux.Post("/value", h.valueJSON)
 			mux.Post("/value/", h.valueJSON)
+			mux.Post("/updates", h.updatesJSON)
+			mux.Post("/updates/", h.updatesJSON)
 		},
 	)
 }

@@ -211,6 +211,56 @@ func TestMemStorage_GetAll(t *testing.T) {
 	)
 }
 
+func TestMemStorage_SaveAll(t *testing.T) {
+	t.Run(
+		"saves multiple metrics", func(t *testing.T) {
+			s := NewMemStore()
+			d := int64(7)
+			v := 1.5
+			metrics := []*models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &d},
+				{ID: "temp", MType: models.Gauge, Value: &v},
+			}
+			require.NoError(t, s.SaveAll(metrics))
+
+			got, err := s.GetAll()
+			require.NoError(t, err)
+			assert.Len(t, got, 2)
+		},
+	)
+
+	t.Run(
+		"counter delta accumulates across batch items", func(t *testing.T) {
+			s := NewMemStore()
+			d1, d2 := int64(3), int64(7)
+			metrics := []*models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &d1},
+				{ID: "hits", MType: models.Counter, Delta: &d2},
+			}
+			require.NoError(t, s.SaveAll(metrics))
+
+			got, err := s.Get("hits", models.Counter)
+			require.NoError(t, err)
+			assert.Equal(t, int64(10), *got.Delta)
+		},
+	)
+
+	t.Run(
+		"stops on first error", func(t *testing.T) {
+			s := NewMemStore()
+			metrics := []*models.Metrics{
+				nil,
+				{ID: "temp", MType: models.Gauge, Value: new(1.0)},
+			}
+			err := s.SaveAll(metrics)
+			assert.ErrorIs(t, err, errors.ErrNilMetric)
+
+			all, _ := s.GetAll()
+			assert.Empty(t, all)
+		},
+	)
+}
+
 // Need to run with -race detector for full coverage
 // Yandex git:(iter4) go test -race ./...
 // fatal error: concurrent map writes without mutex

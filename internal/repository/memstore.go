@@ -2,7 +2,7 @@ package repository
 
 import (
 	"sync"
-
+	
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -25,29 +25,7 @@ func NewMemStore() *MemStore {
 func (m *MemStore) Save(metrics *models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if metrics == nil {
-		return errors.ErrNilMetric
-	}
-
-	switch metrics.MType {
-	case models.Counter:
-		if metrics.Delta == nil {
-			return errors.ErrNilDelta
-		}
-		mm, ok := m.counter[metrics.ID]
-		if ok && mm.Delta != nil {
-			*metrics.Delta += *mm.Delta
-		}
-		m.counter[metrics.ID] = *metrics
-	case models.Gauge:
-		if metrics.Value == nil {
-			return errors.ErrNilValue
-		}
-		m.gauge[metrics.ID] = *metrics
-	default:
-		return errors.ErrUnknownMetricType
-	}
-	return nil
+	return m.save(metrics)
 }
 
 func (m *MemStore) Get(id, mType string) (*models.Metrics, error) {
@@ -82,4 +60,40 @@ func (m *MemStore) GetAll() ([]*models.Metrics, error) {
 		result = append(result, &v)
 	}
 	return result, nil
+}
+
+func (m *MemStore) SaveAll(metrics []*models.Metrics) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, mm := range metrics {
+		if err := m.save(mm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *MemStore) save(metrics *models.Metrics) error {
+	if metrics == nil {
+		return errors.ErrNilMetric
+	}
+	switch metrics.MType {
+	case models.Counter:
+		if metrics.Delta == nil {
+			return errors.ErrNilDelta
+		}
+		mm, ok := m.counter[metrics.ID]
+		if ok && mm.Delta != nil {
+			*metrics.Delta += *mm.Delta
+		}
+		m.counter[metrics.ID] = *metrics
+	case models.Gauge:
+		if metrics.Value == nil {
+			return errors.ErrNilValue
+		}
+		m.gauge[metrics.ID] = *metrics
+	default:
+		return errors.ErrUnknownMetricType
+	}
+	return nil
 }
