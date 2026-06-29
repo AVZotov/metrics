@@ -76,7 +76,7 @@ func (a *Agent) Report() error {
 	metrics := toMetricsSlice(a.gauge, a.counter)
 	a.mu.Unlock()
 
-	if err := sendMetricsJSON(metrics); err != nil {
+	if err := a.sendMetricsJSON(metrics); err != nil {
 		return err
 	}
 
@@ -137,6 +137,32 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	return nil
 }
 
+func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
+	url := fmt.Sprintf("%s/updates/", a.baseURL)
+	buf := bytes.NewBuffer(nil)
+	gz := gzip.NewWriter(buf)
+	if err := json.NewEncoder(gz).Encode(metrics); err != nil {
+		return err
+	}
+	gz.Close()
+
+	req, err := http.NewRequest(http.MethodPost, url, buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models.Metrics {
 	metrics := make([]models.Metrics, 0, len(gauge)+len(counter))
 	for k, v := range gauge {
@@ -146,8 +172,4 @@ func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models
 		metrics = append(metrics, models.Metrics{ID: k, MType: models.Counter, Delta: &v})
 	}
 	return metrics
-}
-
-func sendMetricsJSON([]models.Metrics) error {
-	return nil
 }
