@@ -73,30 +73,13 @@ func (a *Agent) Collect() {
 
 func (a *Agent) Report() error {
 	a.mu.Lock()
-	// Copy data to avoid agent locked if connection slow
-	gauge := make(map[string]float64, len(a.gauge))
-	for k, v := range a.gauge {
-		gauge[k] = v
-	}
-	counter := make(map[string]int64, len(a.counter))
-	for k, v := range a.counter {
-		counter[k] = v
-	}
+	metrics := toMetricsSlice(a.gauge, a.counter)
 	a.mu.Unlock()
 
-	for k, v := range gauge {
-		sv := strconv.FormatFloat(v, 'f', -1, 64)
-		if err := a.sendMetricJSON("gauge", k, sv); err != nil {
-			return err
-		}
+	if err := sendMetricsJSON(metrics); err != nil {
+		return err
 	}
 
-	for k, v := range counter {
-		sv := strconv.FormatInt(v, 10)
-		if err := a.sendMetricJSON("counter", k, sv); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -151,5 +134,20 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
+	return nil
+}
+
+func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models.Metrics {
+	metrics := make([]models.Metrics, 0, len(gauge)+len(counter))
+	for k, v := range gauge {
+		metrics = append(metrics, models.Metrics{ID: k, MType: models.Gauge, Value: &v})
+	}
+	for k, v := range counter {
+		metrics = append(metrics, models.Metrics{ID: k, MType: models.Counter, Delta: &v})
+	}
+	return metrics
+}
+
+func sendMetricsJSON([]models.Metrics) error {
 	return nil
 }
