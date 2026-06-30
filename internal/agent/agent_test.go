@@ -2,6 +2,7 @@ package agent
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,7 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
-	err := a.Report()
+	err := a.Report(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
-	err := a.Report()
+	err := a.Report(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestAgent_Report_ContentEncoding(t *testing.T) {
 
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
-	require.NoError(t, a.Report())
+	require.NoError(t, a.Report(context.Background()))
 }
 
 func TestAgent_Report_URL(t *testing.T) {
@@ -111,7 +112,7 @@ func TestAgent_Report_URL(t *testing.T) {
 
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
-	require.NoError(t, a.Report())
+	require.NoError(t, a.Report(context.Background()))
 
 	// All metrics are sent as a single batch to /updates/
 	require.Len(t, gotPaths, 1)
@@ -139,7 +140,7 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 
 	a := NewAgent(&http.Client{}, server.URL)
 	a.Collect()
-	require.NoError(t, a.Report())
+	require.NoError(t, a.Report(context.Background()))
 
 	gaugeCount, counterCount := 0, 0
 	for _, m := range received {
@@ -161,7 +162,7 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 func TestAgent_Report_Error_On_Unreachable_Server(t *testing.T) {
 	a := NewAgent(&http.Client{}, "http://127.0.0.1:1")
 	a.Collect()
-	err := a.Report()
+	err := a.Report(context.Background())
 	assert.Error(t, err)
 }
 
@@ -236,7 +237,7 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 						}()
 						go func() {
 							defer wg.Done()
-							err := a.Report()
+							err := a.Report(context.Background())
 							if err != nil {
 								assert.NoError(t, err)
 							}
