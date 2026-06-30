@@ -3,14 +3,18 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"runtime"
 	"strconv"
 	"sync"
-
+	"time"
+	
+	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
@@ -36,7 +40,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
+	
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -67,19 +71,21 @@ func (a *Agent) Collect() {
 	a.gauge["Sys"] = float64(stats.Sys)
 	a.gauge["TotalAlloc"] = float64(stats.TotalAlloc)
 	a.gauge["RandomValue"] = rand.Float64()
-
+	
 	a.counter["PollCount"]++
 }
 
-func (a *Agent) Report() error {
+func (a *Agent) Report(ctx context.Context) error {
 	a.mu.Lock()
 	metrics := toMetricsSlice(a.gauge, a.counter)
 	a.mu.Unlock()
-	if len(metrics) != 0 {
-		if err := a.sendMetricsJSON(metrics); err != nil {
-			return err
-		}
+	if len(metrics) == 0 {
+		return nil
 	}
+	if err := a.sendMetricsJSON(metrics); err != nil {
+		return a.retryReport(ctx, metrics, err)
+	}
+	
 	return nil
 }
 
@@ -121,7 +127,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if err := gz.Close(); err != nil {
 		return err
 	}
-
+	
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
 		return err
@@ -130,11 +136,11 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	req.Header.Set("Content-Encoding", "gzip")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return &apperrors.NetworkError{Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return &apperrors.HTTPStatusError{StatusCode: resp.StatusCode}
 	}
 	return nil
 }
@@ -144,27 +150,56 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	buf := bytes.NewBuffer(nil)
 	gz := gzip.NewWriter(buf)
 	if err := json.NewEncoder(gz).Encode(metrics); err != nil {
-		return err
+		return fmt.Errorf("could not encode metrics: %w", err)
 	}
 	if err := gz.Close(); err != nil {
-		return err
+		return fmt.Errorf("could not close gzip writer: %w", err)
 	}
-
+	
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return &apperrors.NetworkError{Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return &apperrors.HTTPStatusError{StatusCode: resp.StatusCode}
 	}
 	return nil
+}
+
+func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, firstErr error) error {
+	if !isRetriable(firstErr) {
+		return &apperrors.RetryError{Succeeded: false, Attempts: []error{firstErr}}
+	}
+	
+	delays := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	attempts := []error{firstErr}
+	
+	for _, delay := range delays {
+		select {
+		case <-ctx.Done():
+			attempts = append(attempts, ctx.Err())
+			return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
+		case <-time.After(delay):
+		}
+		
+		err := a.sendMetricsJSON(metrics)
+		if err == nil {
+			return &apperrors.RetryError{Succeeded: true, Attempts: attempts}
+		}
+		attempts = append(attempts, err)
+		if !isRetriable(err) {
+			return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
+		}
+	}
+	
+	return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
 }
 
 func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models.Metrics {
@@ -176,4 +211,16 @@ func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models
 		metrics = append(metrics, models.Metrics{ID: k, MType: models.Counter, Delta: &v})
 	}
 	return metrics
+}
+
+func isRetriable(err error) bool {
+	if _, ok := errors.AsType[*apperrors.NetworkError](err); ok {
+		return true
+	}
+	
+	if statusErr, ok := errors.AsType[*apperrors.HTTPStatusError](err); ok {
+		return statusErr.Retriable()
+	}
+	
+	return false
 }

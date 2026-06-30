@@ -1,6 +1,10 @@
 package errors
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 var (
 	ErrNilDelta              = errors.New("metrics delta is nil")
@@ -17,3 +21,44 @@ var (
 	ErrInvalidReportInterval = errors.New("report interval must be greater than 0")
 	ErrUnknownFlags          = errors.New("unknown flag arguments")
 )
+
+type RetryError struct {
+	Succeeded bool
+	Attempts  []error
+}
+
+func (e *RetryError) Error() string {
+	msgs := make([]string, 0, len(e.Attempts))
+	for i, err := range e.Attempts {
+		msgs = append(msgs, fmt.Sprintf("attempt %d: %v", i+1, err))
+	}
+	status := "failed"
+	if e.Succeeded {
+		status = "succeeded"
+	}
+	return fmt.Sprintf("retry %s after %d attempts: %s", status, len(e.Attempts), strings.Join(msgs, "; "))
+}
+
+type NetworkError struct {
+	Err error
+}
+
+func (e *NetworkError) Error() string {
+	return fmt.Sprintf("network error: %v", e.Err)
+}
+
+func (e *NetworkError) Unwrap() error {
+	return e.Err
+}
+
+type HTTPStatusError struct {
+	StatusCode int
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprint(e.StatusCode)
+}
+
+func (e *HTTPStatusError) Retriable() bool {
+	return e.StatusCode >= 500
+}
