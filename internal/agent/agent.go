@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -40,7 +40,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	a.gauge["Alloc"] = float64(stats.Alloc)
@@ -71,7 +71,7 @@ func (a *Agent) Collect() {
 	a.gauge["Sys"] = float64(stats.Sys)
 	a.gauge["TotalAlloc"] = float64(stats.TotalAlloc)
 	a.gauge["RandomValue"] = rand.Float64()
-	
+
 	a.counter["PollCount"]++
 }
 
@@ -85,7 +85,7 @@ func (a *Agent) Report(ctx context.Context) error {
 	if err := a.sendMetricsJSON(metrics); err != nil {
 		return a.retryReport(ctx, metrics, err)
 	}
-	
+
 	return nil
 }
 
@@ -127,7 +127,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if err := gz.Close(); err != nil {
 		return err
 	}
-	
+
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return &apperrors.HTTPStatusError{StatusCode: resp.StatusCode}
+		return httpStatusError(resp.StatusCode)
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	if err := gz.Close(); err != nil {
 		return fmt.Errorf("could not close gzip writer: %w", err)
 	}
-	
+
 	req, err := http.NewRequest(http.MethodPost, url, buf)
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
@@ -168,7 +168,7 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return &apperrors.HTTPStatusError{StatusCode: resp.StatusCode}
+		return httpStatusError(resp.StatusCode)
 	}
 	return nil
 }
@@ -177,10 +177,10 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 	if !isRetriable(firstErr) {
 		return &apperrors.RetryError{Succeeded: false, Attempts: []error{firstErr}}
 	}
-	
+
 	delays := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
 	attempts := []error{firstErr}
-	
+
 	for _, delay := range delays {
 		select {
 		case <-ctx.Done():
@@ -188,7 +188,7 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 			return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
 		case <-time.After(delay):
 		}
-		
+
 		err := a.sendMetricsJSON(metrics)
 		if err == nil {
 			return &apperrors.RetryError{Succeeded: true, Attempts: attempts}
@@ -198,29 +198,34 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 			return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
 		}
 	}
-	
+
 	return &apperrors.RetryError{Succeeded: false, Attempts: attempts}
 }
 
 func toMetricsSlice(gauge map[string]float64, counter map[string]int64) []models.Metrics {
 	metrics := make([]models.Metrics, 0, len(gauge)+len(counter))
 	for k, v := range gauge {
+		v := v
 		metrics = append(metrics, models.Metrics{ID: k, MType: models.Gauge, Value: &v})
 	}
 	for k, v := range counter {
+		v := v
 		metrics = append(metrics, models.Metrics{ID: k, MType: models.Counter, Delta: &v})
 	}
 	return metrics
+}
+
+func httpStatusError(statusCode int) error {
+	if statusCode >= 500 {
+		return fmt.Errorf("%w: unexpected response status code %d", apperrors.ErrRetriableStatus, statusCode)
+	}
+	return fmt.Errorf("unexpected response status code %d", statusCode)
 }
 
 func isRetriable(err error) bool {
 	if _, ok := errors.AsType[*apperrors.NetworkError](err); ok {
 		return true
 	}
-	
-	if statusErr, ok := errors.AsType[*apperrors.HTTPStatusError](err); ok {
-		return statusErr.Retriable()
-	}
-	
-	return false
+
+	return errors.Is(err, apperrors.ErrRetriableStatus)
 }

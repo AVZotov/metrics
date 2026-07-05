@@ -20,6 +20,7 @@ var (
 	ErrInvalidPollInterval   = errors.New("poll interval must be greater than 0")
 	ErrInvalidReportInterval = errors.New("report interval must be greater than 0")
 	ErrUnknownFlags          = errors.New("unknown flag arguments")
+	ErrRetriableStatus       = errors.New("retriable http status")
 )
 
 type RetryError struct {
@@ -49,16 +50,4 @@ func (e *NetworkError) Error() string {
 
 func (e *NetworkError) Unwrap() error {
 	return e.Err
-}
-
-type HTTPStatusError struct {
-	StatusCode int
-}
-
-func (e *HTTPStatusError) Error() string {
-	return fmt.Sprint(e.StatusCode)
-}
-
-func (e *HTTPStatusError) Retriable() bool {
-	return e.StatusCode >= 500
 }

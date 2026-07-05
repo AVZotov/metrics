@@ -2,7 +2,7 @@ package repository
 
 import (
 	"sync"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -54,9 +54,11 @@ func (m *MemStore) GetAll() ([]*models.Metrics, error) {
 	defer m.mu.RUnlock()
 	result := make([]*models.Metrics, 0, len(m.gauge)+len(m.counter))
 	for _, v := range m.gauge {
+		v := v
 		result = append(result, &v)
 	}
 	for _, v := range m.counter {
+		v := v
 		result = append(result, &v)
 	}
 	return result, nil
@@ -73,6 +75,9 @@ func (m *MemStore) SaveAll(metrics []*models.Metrics) error {
 	return nil
 }
 
+// Save realize Delta incrementing as data reciever from the Agent
+// PersistRepository using MemStore as single source of data without extra logic
+// on DBStore or FileStore end
 func (m *MemStore) save(metrics *models.Metrics) error {
 	if metrics == nil {
 		return errors.ErrNilMetric

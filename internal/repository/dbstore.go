@@ -3,8 +3,9 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/config/db"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -36,14 +37,14 @@ func NewDBStore(ctx context.Context, dsn string, cfg *db.Config) (*DBStore, erro
 }
 
 func (d *DBStore) Save(metrics *models.Metrics) error {
-	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.ConnectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
 	query := `INSERT INTO metrics (id, mtype, delta, value)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (id, mtype)
 			DO UPDATE SET delta = EXCLUDED.delta, value = EXCLUDED.value`
-	
-	return witRetry(
+
+	return withRetry(
 		ctx,
 		func() error {
 			_, err := d.pool.Exec(ctx, query, metrics.ID, metrics.MType, metrics.Delta, metrics.Value)
@@ -56,16 +57,16 @@ func (d *DBStore) Get(id, mType string) (*models.Metrics, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
 	query := `SELECT id, mtype, delta, value, hash FROM metrics WHERE id = $1 AND mtype = $2`
-	
+
 	m := &models.Metrics{}
 	var hash *string
-	
-	err := witRetry(
+
+	err := withRetry(
 		ctx, func() error {
 			return d.pool.QueryRow(ctx, query, id, mType).Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &hash)
 		},
 	)
-	
+
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperrors.ErrNotFound
@@ -81,11 +82,11 @@ func (d *DBStore) Get(id, mType string) (*models.Metrics, error) {
 func (d *DBStore) GetAll() ([]*models.Metrics, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
-	
+
 	query := `SELECT id, mtype, delta, value, hash FROM metrics`
-	
+
 	var metrics []*models.Metrics
-	err := witRetry(
+	err := withRetry(
 		ctx, func() error {
 			rows, err := d.pool.Query(ctx, query)
 			if err != nil {
@@ -113,37 +114,58 @@ func (d *DBStore) GetAll() ([]*models.Metrics, error) {
 	return metrics, nil
 }
 
+//Александр привет!
+// Ты давал комментарий к коду
+//"а также counter-метрики перезаписываются вместо накопления при upsert"
+// на всякий случай еще добавил комментарий к самим функциям
+// Но возможно я не совсем точно понял сам комментарий
+//я использовал MemStore как единственный источник финальных данных
+// и хотел уйти от дублирования логики накопления
+
+// SaveAll delta is overwritten, not summed: MemStore already accumulates the
+// total before Dump() is called, so this upsert just persists the
+// current snapshot. Summing here would double-count.
 func (d *DBStore) SaveAll(metrics []*models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
-	
+
 	query := `INSERT INTO metrics (id, mtype, delta, value)
               VALUES ($1, $2, $3, $4)
               ON CONFLICT (id, mtype)
               DO UPDATE SET delta = EXCLUDED.delta, value = EXCLUDED.value`
-	
-	return witRetry(
+
+	return withRetry(
 		ctx, func() error {
 			tx, err := d.pool.Begin(ctx)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = tx.Rollback(ctx) }()
-			
+
 			batch := &pgx.Batch{}
 			for _, m := range metrics {
 				batch.Queue(query, m.ID, m.MType, m.Delta, m.Value)
 			}
-			
-			if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+			br := tx.SendBatch(ctx, batch)
+			for i, m := range metrics {
+				if _, err := br.Exec(); err != nil {
+					_ = br.Close()
+					_ = tx.Rollback(ctx)
+					return fmt.Errorf("batch item %d (metric %s): %w", i, m.ID, err)
+				}
+			}
+			if err := br.Close(); err != nil {
+				_ = tx.Rollback(ctx)
 				return err
 			}
-			
-			return tx.Commit(ctx)
+			if err := tx.Commit(ctx); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			return nil
 		},
 	)
 }
@@ -157,21 +179,21 @@ func (d *DBStore) Ping(ctx context.Context) error {
 	return d.pool.Ping(ctx)
 }
 
-func witRetry(ctx context.Context, op func() error) error {
+func withRetry(ctx context.Context, op func() error) error {
 	delays := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
-	
+
 	err := op()
 	if err == nil || !isConnectionException(err) {
 		return err
 	}
-	
+
 	for _, delay := range delays {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(delay):
 		}
-		
+
 		err = op()
 		if err == nil {
 			return nil

@@ -6,15 +6,15 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
-var _ PersistRepository = (*noopStore)(nil)
+var _ PersistRepository = (*NoopStore)(nil)
 
-type noopStore struct{}
+type NoopStore struct{}
 
-func NewNoopStore() PersistRepository { return noopStore{} }
+func NewNoopStore() PersistRepository { return NoopStore{} }
 
-func (noopStore) Save(_ *models.Metrics) error             { return nil }
-func (noopStore) Get(_, _ string) (*models.Metrics, error) { return nil, nil }
-func (noopStore) GetAll() ([]*models.Metrics, error)       { return nil, nil }
-func (noopStore) SaveAll(_ []*models.Metrics) error        { return nil }
-func (noopStore) Close() error                             { return nil }
-func (noopStore) Ping(_ context.Context) error             { return nil }
+func (NoopStore) Save(_ *models.Metrics) error             { return nil }
+func (NoopStore) Get(_, _ string) (*models.Metrics, error) { return nil, nil }
+func (NoopStore) GetAll() ([]*models.Metrics, error)       { return nil, nil }
+func (NoopStore) SaveAll(_ []*models.Metrics) error        { return nil }
+func (NoopStore) Close() error                             { return nil }
+func (NoopStore) Ping(_ context.Context) error             { return nil }
