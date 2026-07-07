@@ -1,24 +1,38 @@
 package service
 
 import (
+	"context"
 	"testing"
-	
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
 type mockRepo struct {
-	saveFn   func(*models.Metrics) error
-	getFn    func(string, string) (*models.Metrics, error)
-	getAllFn func() ([]*models.Metrics, error)
+	saveFn    func(*models.Metrics) error
+	saveAllFn func([]*models.Metrics) error
+	getFn     func(string, string) (*models.Metrics, error)
+	getAllFn   func() ([]*models.Metrics, error)
 }
 
-func (r *mockRepo) Save(m *models.Metrics) error              { return r.saveFn(m) }
+func (r *mockRepo) Save(m *models.Metrics) error {
+	if r.saveFn != nil {
+		return r.saveFn(m)
+	}
+	return nil
+}
+func (r *mockRepo) SaveAll(ms []*models.Metrics) error {
+	if r.saveAllFn != nil {
+		return r.saveAllFn(ms)
+	}
+	return nil
+}
 func (r *mockRepo) Get(id, t string) (*models.Metrics, error) { return r.getFn(id, t) }
 func (r *mockRepo) GetAll() ([]*models.Metrics, error)        { return r.getAllFn() }
+func (r *mockRepo) Ping(_ context.Context) error              { return nil }
 
 func TestNewMetricsService(t *testing.T) {
 	repo := &mockRepo{}
@@ -129,6 +143,81 @@ func TestMetricsService_UpdateMetric(t *testing.T) {
 					},
 				}
 				err := NewMetricsService(repo).UpdateMetric(tt.metricType, tt.metricName, tt.value)
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+				} else {
+					require.NoError(t, err)
+					if tt.checkSaved != nil {
+						tt.checkSaved(t, saved)
+					}
+				}
+			},
+		)
+	}
+}
+
+func TestMetricsService_UpdateMetrics(t *testing.T) {
+	d := int64(5)
+	v := 3.14
+	tests := []struct {
+		name        string
+		metrics     []models.Metrics
+		saveAllFn   func([]*models.Metrics) error
+		wantErr     error
+		checkSaved  func(t *testing.T, saved []*models.Metrics)
+	}{
+		{
+			name:    "empty id returns ErrEmptyMetricName",
+			metrics: []models.Metrics{{ID: "", MType: models.Counter, Delta: &d}},
+			wantErr: errors.ErrEmptyMetricName,
+		},
+		{
+			name:    "unknown type returns ErrUnknownMetricType",
+			metrics: []models.Metrics{{ID: "x", MType: "unknown", Delta: &d}},
+			wantErr: errors.ErrUnknownMetricType,
+		},
+		{
+			name:    "counter with nil delta returns ErrEmptyMetricValue",
+			metrics: []models.Metrics{{ID: "hits", MType: models.Counter}},
+			wantErr: errors.ErrEmptyMetricValue,
+		},
+		{
+			name:    "gauge with nil value returns ErrEmptyMetricValue",
+			metrics: []models.Metrics{{ID: "temp", MType: models.Gauge}},
+			wantErr: errors.ErrEmptyMetricValue,
+		},
+		{
+			name: "valid batch is forwarded to repo",
+			metrics: []models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &d},
+				{ID: "temp", MType: models.Gauge, Value: &v},
+			},
+			checkSaved: func(t *testing.T, saved []*models.Metrics) {
+				require.Len(t, saved, 2)
+			},
+		},
+		{
+			name:    "repository error is propagated",
+			metrics: []models.Metrics{{ID: "hits", MType: models.Counter, Delta: &d}},
+			saveAllFn: func(_ []*models.Metrics) error { return errors.ErrNilDelta },
+			wantErr: errors.ErrNilDelta,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				var saved []*models.Metrics
+				repo := &mockRepo{
+					saveAllFn: func(ms []*models.Metrics) error {
+						saved = ms
+						if tt.saveAllFn != nil {
+							return tt.saveAllFn(ms)
+						}
+						return nil
+					},
+				}
+				err := NewMetricsService(repo).UpdateMetrics(tt.metrics)
 				if tt.wantErr != nil {
 					assert.ErrorIs(t, err, tt.wantErr)
 				} else {

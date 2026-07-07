@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewMemStorage(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStore()
 	require.NotNil(t, s)
 	assert.NotNil(t, s.gauge)
 	assert.NotNil(t, s.counter)
@@ -21,41 +21,41 @@ func TestNewMemStorage(t *testing.T) {
 func TestMemStorage_Save(t *testing.T) {
 	tests := []struct {
 		name    string
-		initial func() *MemStorage
+		initial func() *MemStore
 		metric  *models.Metrics
 		wantErr error
-		check   func(t *testing.T, s *MemStorage)
+		check   func(t *testing.T, s *MemStore)
 	}{
 		{
 			name:    "nil metric returns ErrNilMetric",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  nil,
 			wantErr: errors.ErrNilMetric,
 		},
 		{
 			name:    "unknown type returns ErrUnknownMetricType",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "x", MType: "unknown"},
 			wantErr: errors.ErrUnknownMetricType,
 		},
 		{
 			name:    "counter with nil delta returns ErrNilDelta",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "c", MType: models.Counter, Delta: nil},
 			wantErr: errors.ErrNilDelta,
 		},
 		{
 			name:    "gauge with nil value returns ErrNilValue",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "g", MType: models.Gauge, Value: nil},
 			wantErr: errors.ErrNilValue,
 		},
 		{
 			name:    "save gauge stores value",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "temp", MType: models.Gauge, Value: new(36.6)},
 			wantErr: nil,
-			check: func(t *testing.T, s *MemStorage) {
+			check: func(t *testing.T, s *MemStore) {
 				m, ok := s.gauge["temp"]
 				require.True(t, ok)
 				assert.Equal(t, 36.6, *m.Value)
@@ -63,10 +63,10 @@ func TestMemStorage_Save(t *testing.T) {
 		},
 		{
 			name:    "save gauge overwrites previous value",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "temp", MType: models.Gauge, Value: new(100.0)},
 			wantErr: nil,
-			check: func(t *testing.T, s *MemStorage) {
+			check: func(t *testing.T, s *MemStore) {
 				m, ok := s.gauge["temp"]
 				require.True(t, ok)
 				assert.Equal(t, 100.0, *m.Value)
@@ -74,10 +74,10 @@ func TestMemStorage_Save(t *testing.T) {
 		},
 		{
 			name:    "save counter stores delta",
-			initial: NewMemStorage,
+			initial: NewMemStore,
 			metric:  &models.Metrics{ID: "hits", MType: models.Counter, Delta: new(int64(5))},
 			wantErr: nil,
-			check: func(t *testing.T, s *MemStorage) {
+			check: func(t *testing.T, s *MemStore) {
 				m, ok := s.counter["hits"]
 				require.True(t, ok)
 				assert.Equal(t, int64(5), *m.Delta)
@@ -85,14 +85,14 @@ func TestMemStorage_Save(t *testing.T) {
 		},
 		{
 			name: "save counter accumulates delta",
-			initial: func() *MemStorage {
-				s := NewMemStorage()
+			initial: func() *MemStore {
+				s := NewMemStore()
 				s.counter["count"] = models.Metrics{ID: "count", MType: models.Counter, Delta: new(int64(3))}
 				return s
 			},
 			metric:  &models.Metrics{ID: "count", MType: models.Counter, Delta: new(int64(7))},
 			wantErr: nil,
-			check: func(t *testing.T, s *MemStorage) {
+			check: func(t *testing.T, s *MemStore) {
 				m, ok := s.counter["count"]
 				require.True(t, ok)
 				assert.Equal(t, int64(10), *m.Delta)
@@ -119,7 +119,7 @@ func TestMemStorage_Save(t *testing.T) {
 }
 
 func TestMemStorage_Get(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStore()
 	s.counter["reqs"] = models.Metrics{ID: "reqs", MType: models.Counter, Delta: new(int64(42))}
 	s.gauge["cpu"] = models.Metrics{ID: "cpu", MType: models.Gauge, Value: new(3.14)}
 	
@@ -184,7 +184,7 @@ func TestMemStorage_Get(t *testing.T) {
 func TestMemStorage_GetAll(t *testing.T) {
 	t.Run(
 		"empty storage returns empty slice", func(t *testing.T) {
-			s := NewMemStorage()
+			s := NewMemStore()
 			result, err := s.GetAll()
 			require.NoError(t, err)
 			assert.Empty(t, result)
@@ -193,7 +193,7 @@ func TestMemStorage_GetAll(t *testing.T) {
 	
 	t.Run(
 		"returns all gauges and counters", func(t *testing.T) {
-			s := NewMemStorage()
+			s := NewMemStore()
 			s.gauge["g1"] = models.Metrics{ID: "g1", MType: models.Gauge, Value: new(1.0)}
 			s.gauge["g2"] = models.Metrics{ID: "g2", MType: models.Gauge, Value: new(2.0)}
 			s.counter["c1"] = models.Metrics{ID: "c1", MType: models.Counter, Delta: new(int64(10))}
@@ -211,11 +211,61 @@ func TestMemStorage_GetAll(t *testing.T) {
 	)
 }
 
+func TestMemStorage_SaveAll(t *testing.T) {
+	t.Run(
+		"saves multiple metrics", func(t *testing.T) {
+			s := NewMemStore()
+			d := int64(7)
+			v := 1.5
+			metrics := []*models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &d},
+				{ID: "temp", MType: models.Gauge, Value: &v},
+			}
+			require.NoError(t, s.SaveAll(metrics))
+
+			got, err := s.GetAll()
+			require.NoError(t, err)
+			assert.Len(t, got, 2)
+		},
+	)
+
+	t.Run(
+		"counter delta accumulates across batch items", func(t *testing.T) {
+			s := NewMemStore()
+			d1, d2 := int64(3), int64(7)
+			metrics := []*models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &d1},
+				{ID: "hits", MType: models.Counter, Delta: &d2},
+			}
+			require.NoError(t, s.SaveAll(metrics))
+
+			got, err := s.Get("hits", models.Counter)
+			require.NoError(t, err)
+			assert.Equal(t, int64(10), *got.Delta)
+		},
+	)
+
+	t.Run(
+		"stops on first error", func(t *testing.T) {
+			s := NewMemStore()
+			metrics := []*models.Metrics{
+				nil,
+				{ID: "temp", MType: models.Gauge, Value: new(1.0)},
+			}
+			err := s.SaveAll(metrics)
+			assert.ErrorIs(t, err, errors.ErrNilMetric)
+
+			all, _ := s.GetAll()
+			assert.Empty(t, all)
+		},
+	)
+}
+
 // Need to run with -race detector for full coverage
 // Yandex git:(iter4) go test -race ./...
 // fatal error: concurrent map writes without mutex
 func TestMemStorage_ConcurrentSave(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStore()
 	const requests int64 = 1000
 	
 	tests := []struct {

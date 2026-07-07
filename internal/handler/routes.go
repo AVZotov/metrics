@@ -17,6 +17,7 @@ func register(mux *chi.Mux, h *Handler) {
 	mux.Post("/update/{type}/{name}/{value}", h.update)
 	mux.Get("/value/{type}/{name}", h.getValue)
 	mux.Get("/", h.getAll)
+	mux.Get("/ping", h.ping)
 	
 	mux.Group(
 		func(mux chi.Router) {
@@ -25,6 +26,8 @@ func register(mux *chi.Mux, h *Handler) {
 			mux.Post("/update/", h.updateJSON)
 			mux.Post("/value", h.valueJSON)
 			mux.Post("/value/", h.valueJSON)
+			mux.Post("/updates", h.updatesJSON)
+			mux.Post("/updates/", h.updatesJSON)
 		},
 	)
 }
