@@ -168,7 +168,7 @@ func SignMiddleware(key string) func(http.Handler) http.Handler {
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 				signature := r.Header.Get("HashSHA256")
-				if !sign.Verify(bodyBytes, key, signature) {
+				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
