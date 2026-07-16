@@ -19,6 +19,7 @@ var (
 	ErrInvalidValue          = errors.New("invalid value")
 	ErrInvalidPollInterval   = errors.New("poll interval must be greater than 0")
 	ErrInvalidReportInterval = errors.New("report interval must be greater than 0")
+	ErrInvalidRateLimit      = errors.New("rate limit must be greater than 0")
 	ErrUnknownFlags          = errors.New("unknown flag arguments")
 	ErrRetriableStatus       = errors.New("retriable http status")
 )

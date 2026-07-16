@@ -7,6 +7,7 @@ const (
 	Port                      = 8080
 	PollInterval              = 2
 	ReportInterval            = 10
+	RateLimit                 = 1
 	StoreInterval             = 300
 	FileStoragePath           = "data/metrics.json"
 	Restore                   = true
