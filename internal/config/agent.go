@@ -11,8 +11,9 @@ import (
 
 type AgentConfig struct {
 	Address        `env:"ADDRESS"`
-	PollInterval   uint `env:"POLL_INTERVAL"`
-	ReportInterval uint `env:"REPORT_INTERVAL"`
+	PollInterval   uint   `env:"POLL_INTERVAL"`
+	ReportInterval uint   `env:"REPORT_INTERVAL"`
+	Key            string `env:"KEY"`
 }
 
 func NewAgentConfig() (*AgentConfig, error) {
@@ -41,11 +42,13 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	flag.Var(&cfg.Address, "a", "address in form host:port")
 	pollInterval := flag.Uint("p", PollInterval, "poll interval in seconds")
 	reportInterval := flag.Uint("r", ReportInterval, "report interval in seconds")
+	key := flag.String("k", "", "signing key")
 
 	flag.Parse()
 
 	cfg.PollInterval = *pollInterval
 	cfg.ReportInterval = *reportInterval
+	cfg.Key = *key
 
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {

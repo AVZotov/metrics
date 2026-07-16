@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"compress/gzip"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/AVZotov/metrics/internal/sign"
 	"go.uber.org/zap"
 )
 
@@ -57,6 +60,27 @@ func (w *responseCompressedWriter) Write(b []byte) (int, error) {
 		return w.gw.Write(b)
 	}
 	return w.ResponseWriter.Write(b)
+}
+
+type signResponseWriter struct {
+	http.ResponseWriter
+	buf        bytes.Buffer
+	statusCode int
+}
+
+func (w *signResponseWriter) Write(b []byte) (int, error) {
+	return w.buf.Write(b)
+}
+
+func (w *signResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+}
+
+func finalizeSignedResponse(w http.ResponseWriter, sw *signResponseWriter, key string) {
+	signature := sign.Sign(sw.buf.Bytes(), key)
+	w.Header().Set("HashSHA256", signature)
+	w.WriteHeader(sw.statusCode)
+	w.Write(sw.buf.Bytes())
 }
 
 func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
@@ -119,6 +143,39 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 					return
 				}
 				next.ServeHTTP(w, r)
+			},
+		)
+	}
+}
+
+func SignMiddleware(key string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				if key == "" {
+					next.ServeHTTP(w, r)
+					return
+				}
+
+				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err != nil {
+					sw.WriteHeader(http.StatusBadRequest)
+					finalizeSignedResponse(w, sw, key)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+				signature := r.Header.Get("HashSHA256")
+				if !sign.Verify(bodyBytes, key, signature) {
+					sw.WriteHeader(http.StatusBadRequest)
+					finalizeSignedResponse(w, sw, key)
+					return
+				}
+
+				next.ServeHTTP(sw, r)
+				finalizeSignedResponse(w, sw, key)
 			},
 		)
 	}

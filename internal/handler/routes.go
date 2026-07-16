@@ -5,8 +5,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewRouter(h *Handler, logger *zap.Logger) *chi.Mux {
+func NewRouter(h *Handler, logger *zap.Logger, key string) *chi.Mux {
 	mux := chi.NewMux()
+	mux.Use(SignMiddleware(key))
 	mux.Use(LoggingMiddleware(logger))
 	mux.Use(CompressMiddleware())
 	register(mux, h)
@@ -18,7 +19,7 @@ func register(mux *chi.Mux, h *Handler) {
 	mux.Get("/value/{type}/{name}", h.getValue)
 	mux.Get("/", h.getAll)
 	mux.Get("/ping", h.ping)
-	
+
 	mux.Group(
 		func(mux chi.Router) {
 			mux.Use(ContentTypeMiddleware("application/json"))

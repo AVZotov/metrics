@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/agent"
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
@@ -32,18 +32,18 @@ func main() {
 func run(logger *zap.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	
+
 	cfg, err := config.NewAgentConfig()
 	if err != nil {
 		return err
 	}
 	client := &http.Client{}
 	baseURL := fmt.Sprintf("http://%s", cfg.String())
-	a := agent.NewAgent(client, baseURL)
-	
+	a := agent.NewAgent(client, baseURL, cfg.Key)
+
 	go collectLoop(ctx, a, time.Duration(cfg.PollInterval)*time.Second)
 	go reportLoop(ctx, a, logger, time.Duration(cfg.ReportInterval)*time.Second)
-	
+
 	<-ctx.Done()
 	logger.Info("shutting down agent")
 	return nil
