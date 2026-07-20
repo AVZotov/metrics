@@ -16,7 +16,7 @@ func register(mux *chi.Mux, h *Handler, key string) {
 	mux.Get("/", h.getAll)
 	mux.Get("/ping", h.ping)
 
-	mux.Group(func(r chi.Router) {
+	mux.Group(func(mux chi.Router) {
 		mux.Use(SignMiddleware(key))
 		mux.Use(CompressMiddleware())
 		mux.Post("/update/{type}/{name}/{value}", h.update)
