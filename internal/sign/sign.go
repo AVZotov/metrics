@@ -3,7 +3,6 @@ package sign
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 )
 
@@ -15,5 +14,16 @@ func Sign(data []byte, key string) string {
 
 func Verify(data []byte, key string, signature string) bool {
 	expectedMAC := Sign(data, key)
-	return subtle.ConstantTimeCompare([]byte(signature), []byte(expectedMAC)) == 1
+
+	expectedBytes, err := hex.DecodeString(expectedMAC)
+	if err != nil {
+		return false
+	}
+
+	signatureBytes, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+
+	return hmac.Equal(signatureBytes, expectedBytes)
 }

@@ -28,6 +28,7 @@ type Agent struct {
 	gauge   map[string]float64
 	counter map[string]int64
 	key     string
+	cpuWarm sync.Once
 }
 
 func NewAgent(client *http.Client, baseURL string, key string) *Agent {
@@ -82,6 +83,10 @@ func (a *Agent) Collect() {
 
 // CollectGopsutil polls system
 func (a *Agent) CollectGopsutil() error {
+	a.cpuWarm.Do(func() {
+		_, _ = cpu.Percent(0, true)
+	})
+
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		return fmt.Errorf("could not read virtual memory stats: %w", err)
