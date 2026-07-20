@@ -80,7 +80,7 @@ func finalizeSignedResponse(w http.ResponseWriter, sw *signResponseWriter, key s
 	signature := sign.Sign(sw.buf.Bytes(), key)
 	w.Header().Set("HashSHA256", signature)
 	w.WriteHeader(sw.statusCode)
-	w.Write(sw.buf.Bytes())
+	_, _ = w.Write(sw.buf.Bytes())
 }
 
 func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
