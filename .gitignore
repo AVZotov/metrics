@@ -27,5 +27,6 @@ vendor/
 # Internal documents
 Docs/
 data/
-
 .task/
+.claude/
+CLAUDE.md

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	
+
 	dbcfg "github.com/AVZotov/metrics/internal/config/db"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
@@ -21,6 +21,7 @@ type ServerConfig struct {
 	DSN                 string `env:"DATABASE_DSN"`
 	DSNSet              bool
 	DB                  dbcfg.Config
+	Key                 string `env:"KEY"`
 }
 
 func NewServerConfig() (*ServerConfig, error) {
@@ -57,9 +58,10 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.BoolVar(&config.Restore, "r", Restore, "restore store on server restart")
 	flag.StringVar(&config.FileStoragePath, "f", FileStoragePath, "store path")
 	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
-	
+	flag.StringVar(&config.Key, "k", "", "signing key")
+
 	flag.Parse()
-	
+
 	flag.Visit(
 		func(f *flag.Flag) {
 			if f.Name == "d" {
@@ -67,7 +69,7 @@ func parseServerFlags(config *ServerConfig) error {
 			}
 		},
 	)
-	
+
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
@@ -90,11 +92,11 @@ func parseFilePath(cfg *ServerConfig) error {
 		return nil
 	}
 	cleaned := filepath.Clean(cfg.FileStoragePath)
-	
+
 	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
 		return errors.New("path must point to a file, not a directory")
 	}
-	
+
 	cfg.FileStoragePath = cleaned
 	return nil
 }

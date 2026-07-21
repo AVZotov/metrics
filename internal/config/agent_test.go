@@ -23,6 +23,7 @@ func TestSetAgentDefaults(t *testing.T) {
 	assert.Equal(t, Port, cfg.Port)
 	assert.Equal(t, uint(PollInterval), cfg.PollInterval)
 	assert.Equal(t, uint(ReportInterval), cfg.ReportInterval)
+	assert.Equal(t, uint(RateLimit), cfg.RateLimit)
 }
 
 func TestValidateAgentConfig(t *testing.T) {
@@ -33,22 +34,27 @@ func TestValidateAgentConfig(t *testing.T) {
 	}{
 		{
 			name:    "valid config",
-			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10},
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10, RateLimit: 1},
 			wantErr: nil,
 		},
 		{
 			name:    "zero poll interval",
-			cfg:     AgentConfig{PollInterval: 0, ReportInterval: 10},
+			cfg:     AgentConfig{PollInterval: 0, ReportInterval: 10, RateLimit: 1},
 			wantErr: apperrors.ErrInvalidPollInterval,
 		},
 		{
 			name:    "zero report interval",
-			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 0},
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 0, RateLimit: 1},
 			wantErr: apperrors.ErrInvalidReportInterval,
 		},
 		{
+			name:    "zero rate limit",
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10, RateLimit: 0},
+			wantErr: apperrors.ErrInvalidRateLimit,
+		},
+		{
 			name:    "both intervals zero returns poll error first",
-			cfg:     AgentConfig{PollInterval: 0, ReportInterval: 0},
+			cfg:     AgentConfig{PollInterval: 0, ReportInterval: 0, RateLimit: 1},
 			wantErr: apperrors.ErrInvalidPollInterval,
 		},
 	}

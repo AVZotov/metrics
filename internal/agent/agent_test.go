@@ -16,14 +16,14 @@ import (
 
 func TestAgent_Collect_Check_Count(t *testing.T) {
 	want := int64(1)
-	a := NewAgent(&http.Client{}, "")
+	a := NewAgent(&http.Client{}, "", "")
 	a.Collect()
 	got := a.counter["PollCount"]
 	assert.Equal(t, want, got)
 }
 
 func TestAgent_Collect_Check_Gauge(t *testing.T) {
-	a := NewAgent(&http.Client{}, "")
+	a := NewAgent(&http.Client{}, "", "")
 	a.Collect()
 	for _, k := range gMetrics {
 		assert.Contains(t, a.gauge, k, "metric %s not found in gauge", k)
@@ -42,7 +42,7 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	a.Collect()
 	err := a.Report(context.Background())
 	if err != nil {
@@ -64,7 +64,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	a.Collect()
 	err := a.Report(context.Background())
 	if err != nil {
@@ -74,7 +74,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 
 func TestNewAgent(t *testing.T) {
 	client := &http.Client{}
-	a := NewAgent(client, "http://localhost:8080")
+	a := NewAgent(client, "http://localhost:8080", "")
 
 	assert.Equal(t, "http://localhost:8080", a.baseURL)
 	assert.NotNil(t, a.gauge)
@@ -83,7 +83,7 @@ func TestNewAgent(t *testing.T) {
 }
 
 func TestAgent_Collect_PollCount_Accumulates(t *testing.T) {
-	a := NewAgent(&http.Client{}, "")
+	a := NewAgent(&http.Client{}, "", "")
 	a.Collect()
 	a.Collect()
 	a.Collect()
@@ -91,26 +91,34 @@ func TestAgent_Collect_PollCount_Accumulates(t *testing.T) {
 }
 
 func TestAgent_Report_ContentEncoding(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
-		w.WriteHeader(http.StatusOK)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
+				w.WriteHeader(http.StatusOK)
+			},
+		),
+	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 }
 
 func TestAgent_Report_URL(t *testing.T) {
 	var gotPaths []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPaths = append(gotPaths, r.URL.Path)
-		w.WriteHeader(http.StatusOK)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				gotPaths = append(gotPaths, r.URL.Path)
+				w.WriteHeader(http.StatusOK)
+			},
+		),
+	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 
@@ -121,24 +129,28 @@ func TestAgent_Report_URL(t *testing.T) {
 
 func TestAgent_Report_Body_Gauge(t *testing.T) {
 	var received []models.Metrics
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gz, err := gzip.NewReader(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		defer gz.Close()
-		var batch []models.Metrics
-		if err := json.NewDecoder(gz).Decode(&batch); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		received = append(received, batch...)
-		w.WriteHeader(http.StatusOK)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				gz, err := gzip.NewReader(r.Body)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				defer gz.Close()
+				var batch []models.Metrics
+				if err := json.NewDecoder(gz).Decode(&batch); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				received = append(received, batch...)
+				w.WriteHeader(http.StatusOK)
+			},
+		),
+	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 
@@ -160,44 +172,52 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 }
 
 func TestAgent_Report_Error_On_Unreachable_Server(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://127.0.0.1:1")
+	a := NewAgent(&http.Client{}, "http://127.0.0.1:1", "")
 	a.Collect()
 	err := a.Report(context.Background())
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_InvalidGaugeValue(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://localhost:8080")
+	a := NewAgent(&http.Client{}, "http://localhost:8080", "")
 	err := a.sendMetricJSON(models.Gauge, "TestMetric", "notanumber")
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_InvalidCounterValue(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://localhost:8080")
+	a := NewAgent(&http.Client{}, "http://localhost:8080", "")
 	err := a.sendMetricJSON(models.Counter, "PollCount", "notanumber")
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_NonOKStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+		),
+	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	err := a.sendMetricJSON(models.Gauge, "Alloc", "1.5")
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetric(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/update/gauge/Alloc/42.5", r.URL.Path)
-		assert.Equal(t, http.MethodPost, r.Method)
-		w.WriteHeader(http.StatusOK)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/update/gauge/Alloc/42.5", r.URL.Path)
+				assert.Equal(t, http.MethodPost, r.Method)
+				w.WriteHeader(http.StatusOK)
+			},
+		),
+	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL)
+	a := NewAgent(&http.Client{}, server.URL, "")
 	err := a.sendMetric("gauge", "Alloc", "42.5")
 	require.NoError(t, err)
 }
@@ -226,7 +246,7 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 				),
 			)
 			defer server.Close()
-			a := NewAgent(&http.Client{}, server.URL)
+			a := NewAgent(&http.Client{}, server.URL, "")
 			t.Run(
 				tt.name, func(t *testing.T) {
 					for i := 0; i < requests; i++ {

@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	
+
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -25,7 +25,7 @@ type mockService struct {
 	updateFn        func(mType, name, value string) error
 	updateMetricsFn func([]models.Metrics) error
 	getFn           func(id, mType string) (*models.Metrics, error)
-	getAllFn         func() ([]*models.Metrics, error)
+	getAllFn        func() ([]*models.Metrics, error)
 }
 
 func (m *mockService) UpdateMetric(mType, name, value string) error {
@@ -63,7 +63,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger)
+	return NewRouter(h, logger, "")
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -74,7 +74,7 @@ func setupRouter(t *testing.T) chi.Router {
 	s := service.NewMetricsService(store)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger)
+	return NewRouter(h, logger, "")
 }
 
 func TestHandler_update_Counter(t *testing.T) {
@@ -239,7 +239,7 @@ func TestHandler_getValue(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -296,7 +296,7 @@ func TestHandler_getAll(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -411,7 +411,7 @@ func TestHandler_valueJSON(t *testing.T) {
 			contentType: "application/json",
 			seedURL:     "/update/counter/myCounter/42",
 			body:        `{"id":"myCounter","type":"counter"}`,
-			want:        want{
+			want: want{
 				statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyDelta: &delta42,
 			},
 		},
@@ -420,7 +420,7 @@ func TestHandler_valueJSON(t *testing.T) {
 			contentType: "application/json",
 			seedURL:     "/update/gauge/myGauge/3.14",
 			body:        `{"id":"myGauge","type":"gauge"}`,
-			want:        want{
+			want: want{
 				statusCode: http.StatusOK, contentType: "application/json; charset=utf-8", bodyValue: &value314,
 			},
 		},
@@ -707,7 +707,7 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(payload))
 	gz.Close()
-	
+
 	var gotBody string
 	next := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -877,7 +877,9 @@ func TestHandler_updatesJSON_ServiceError(t *testing.T) {
 		updateMetricsFn: func([]models.Metrics) error { return sentinel },
 	}
 	router := setupRouterWithService(svc)
-	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(`[{"id":"x","type":"counter","delta":1}]`))
+	req := httptest.NewRequest(
+		http.MethodPost, "/updates/", strings.NewReader(`[{"id":"x","type":"counter","delta":1}]`),
+	)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -901,12 +903,12 @@ func TestHandler_updatesJSON_ResponseBody(t *testing.T) {
 func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	reqBody := `{"id":"cpu","type":"gauge","value":1.5}`
 	respBody := `{"id":"cpu","type":"gauge","value":1.5}`
-	
+
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(reqBody))
 	gz.Close()
-	
+
 	next := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(r.Body)
@@ -921,7 +923,7 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
-	
+
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)

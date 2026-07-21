@@ -11,7 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -29,7 +29,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	wg := sync.WaitGroup{}
-	
+
 	cfg, err := config.NewServerConfig()
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func run() error {
 	}
 	s := service.NewMetricsService(repo)
 	h := handler.New(s, logger)
-	mux := handler.NewRouter(h, logger)
+	mux := handler.NewRouter(h, logger, cfg.Key)
 	server := &http.Server{
 		Addr:    cfg.String(),
 		Handler: mux,
@@ -64,13 +64,13 @@ func run() error {
 			log.Fatal(err)
 		}
 	}()
-	
+
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(
 		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second,
 	)
 	defer shutdownCancel()
-	
+
 	logger.Info("shutting down server...")
 	var shutdownErr error
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -87,7 +87,7 @@ func run() error {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-	
+
 	return shutdownErr
 }
 
@@ -138,6 +138,6 @@ func initRepo(
 			}
 		}()
 	}
-	
+
 	return repo, nil
 }

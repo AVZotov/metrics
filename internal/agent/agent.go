@@ -16,6 +16,9 @@ import (
 
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
+	"github.com/AVZotov/metrics/internal/sign"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 type Agent struct {
@@ -24,9 +27,11 @@ type Agent struct {
 	baseURL string
 	gauge   map[string]float64
 	counter map[string]int64
+	key     string
+	cpuWarm sync.Once
 }
 
-func NewAgent(client *http.Client, baseURL string) *Agent {
+func NewAgent(client *http.Client, baseURL string, key string) *Agent {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
 	return &Agent{
@@ -34,6 +39,7 @@ func NewAgent(client *http.Client, baseURL string) *Agent {
 		baseURL: baseURL,
 		gauge:   gauge,
 		counter: counter,
+		key:     key,
 	}
 }
 
@@ -75,10 +81,45 @@ func (a *Agent) Collect() {
 	a.counter["PollCount"]++
 }
 
-func (a *Agent) Report(ctx context.Context) error {
+// CollectGopsutil polls system
+func (a *Agent) CollectGopsutil() error {
+	a.cpuWarm.Do(func() {
+		_, _ = cpu.Percent(0, true)
+	})
+
+	vm, err := mem.VirtualMemory()
+	if err != nil {
+		return fmt.Errorf("could not read virtual memory stats: %w", err)
+	}
+	percentages, err := cpu.Percent(0, true)
+	if err != nil {
+		return fmt.Errorf("could not read cpu utilization: %w", err)
+	}
+
 	a.mu.Lock()
-	metrics := toMetricsSlice(a.gauge, a.counter)
-	a.mu.Unlock()
+	defer a.mu.Unlock()
+
+	a.gauge["TotalMemory"] = float64(vm.Total)
+	a.gauge["FreeMemory"] = float64(vm.Free)
+	for i, p := range percentages {
+		a.gauge[fmt.Sprintf("CPUutilization%d", i+1)] = p
+	}
+
+	return nil
+}
+
+// Report collects the current snapshot and sends it synchronously.
+func (a *Agent) Report(ctx context.Context) error {
+	return a.SendWithRetry(ctx, a.Snapshot())
+}
+
+func (a *Agent) Snapshot() []models.Metrics {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return toMetricsSlice(a.gauge, a.counter)
+}
+
+func (a *Agent) SendWithRetry(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
@@ -89,6 +130,7 @@ func (a *Agent) Report(ctx context.Context) error {
 	return nil
 }
 
+// Unused functions for back compatibility
 func (a *Agent) sendMetric(metricType, name, value string) error {
 	url := fmt.Sprintf("%s/update/%s/%s/%s", a.baseURL, metricType, name, value)
 	resp, err := a.client.Post(url, "text/plain", nil)
@@ -99,6 +141,7 @@ func (a *Agent) sendMetric(metricType, name, value string) error {
 	return nil
 }
 
+// Unused functions for back compatibility
 func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	url := fmt.Sprintf("%s/update", a.baseURL)
 	m := models.Metrics{
@@ -162,6 +205,12 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
+
+	if a.key != "" {
+		signature := sign.Sign(buf.Bytes(), a.key)
+		req.Header.Set("HashSHA256", signature)
+	}
+
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return &apperrors.NetworkError{Err: err}
