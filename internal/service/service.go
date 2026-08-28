@@ -7,8 +7,8 @@ import (
 )
 
 type Service interface {
-	UpdateMetric(metricType, name, value string) error
-	UpdateMetrics(metrics []models.Metrics) error
+	UpdateMetric(metricType, name, value, ipAddress string) error
+	UpdateMetrics(metrics []models.Metrics, ipAddress string) error
 	GetMetric(id, mType string) (*models.Metrics, error)
 	GetMetrics() ([]*models.Metrics, error)
 }

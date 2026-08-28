@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	
+	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -18,15 +19,17 @@ type metricsRepository interface {
 
 type MetricsService struct {
 	repository metricsRepository
+	notifier   *audit.Notifier
 }
 
-func NewMetricsService(r metricsRepository) *MetricsService {
+func NewMetricsService(r metricsRepository, n *audit.Notifier) *MetricsService {
 	return &MetricsService{
 		repository: r,
+		notifier:   n,
 	}
 }
 
-func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
+func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string) error {
 	if name == "" {
 		return errors.ErrEmptyMetricName
 	}
@@ -67,11 +70,15 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 		return err
 	}
 	
+	event := audit.NewEvent([]string{metrics.ID}, ipAddress)
+	m.notifier.Notify(event)
+	
 	return nil
 }
 
-func (m *MetricsService) UpdateMetrics(metrics []models.Metrics) error {
+func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress string) error {
 	toSave := make([]*models.Metrics, 0, len(metrics))
+	auditNames := make([]string, 0, len(metrics))
 	for i := range metrics {
 		mm := metrics[i]
 		
@@ -89,9 +96,16 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics) error {
 		}
 		
 		toSave = append(toSave, &mm)
+		auditNames = append(auditNames, mm.ID)
 	}
 	
-	return m.repository.SaveAll(toSave)
+	if err := m.repository.SaveAll(toSave); err != nil {
+		return err
+	}
+	event := audit.NewEvent(auditNames, ipAddress)
+	m.notifier.Notify(event)
+	
+	return nil
 }
 
 func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {
