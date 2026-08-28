@@ -30,15 +30,21 @@ func New(s service.PersistService, l *zap.Logger) *Handler {
 	}
 }
 
+func (h *Handler) remoteIP(r *http.Request) string {
+	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
+		return ""
+	}
+	return ipAddress
+}
+
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	mType := chi.URLParam(r, "type")
 	mName := chi.URLParam(r, "name")
 	mValue := chi.URLParam(r, "value")
-	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
-	}
+	ipAddress := h.remoteIP(r)
 
 	if err := h.service.UpdateMetric(mType, mName, mValue, ipAddress); err != nil {
 		if errors.Is(err, e.ErrEmptyMetricName) {
@@ -122,10 +128,7 @@ func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to decode json", zap.Error(err))
 		return
 	}
-	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
-	}
+	ipAddress := h.remoteIP(r)
 
 	switch m.MType {
 	case models.Counter:
@@ -218,10 +221,7 @@ func (h *Handler) updatesJSON(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
-	}
+	ipAddress := h.remoteIP(r)
 
 	if err := h.service.UpdateMetrics(m, ipAddress); err != nil {
 		h.logger.Error("failed to update metrics", zap.Error(err))

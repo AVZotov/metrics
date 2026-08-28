@@ -102,16 +102,22 @@ func parseServerEnv(cfg *ServerConfig) error {
 	return env.Parse(cfg)
 }
 
-func parseFilePath(cfg *ServerConfig) error {
-	if cfg.FileStoragePath == "" {
-		return nil
+func cleanFilePath(path string) (string, error) {
+	if path == "" {
+		return "", nil
 	}
-	cleaned := filepath.Clean(cfg.FileStoragePath)
-
+	cleaned := filepath.Clean(path)
 	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
-		return errors.New("path must point to a file, not a directory")
+		return "", errors.New("path must point to a file, not a directory")
 	}
+	return cleaned, nil
+}
 
+func parseFilePath(cfg *ServerConfig) error {
+	cleaned, err := cleanFilePath(cfg.FileStoragePath)
+	if err != nil {
+		return err
+	}
 	cfg.FileStoragePath = cleaned
 	return nil
 }
@@ -124,15 +130,10 @@ func validateDSN(cfg *ServerConfig) error {
 }
 
 func parseAuditFilePath(cfg *ServerConfig) error {
-	if cfg.Audit.File == "" {
-		return nil
+	cleaned, err := cleanFilePath(cfg.Audit.File)
+	if err != nil {
+		return err
 	}
-	cleaned := filepath.Clean(cfg.Audit.File)
-
-	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
-		return errors.New("path must point to a file, not a directory")
-	}
-
 	cfg.Audit.File = cleaned
 	return nil
 }

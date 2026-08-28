@@ -21,7 +21,7 @@ func TestSetServerDefaults(t *testing.T) {
 	assert.Equal(t, FileStoragePath, cfg.FileStoragePath)
 }
 
-func TestParseFilePath(t *testing.T) {
+func TestCleanFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
@@ -69,16 +69,26 @@ func TestParseFilePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &ServerConfig{FileStoragePath: tt.inputPath}
-			err := parseFilePath(cfg)
+			got, err := cleanFilePath(tt.inputPath)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantPath, cfg.FileStoragePath)
+			assert.Equal(t, tt.wantPath, got)
 		})
 	}
+}
+
+func TestParseFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &ServerConfig{FileStoragePath: filepath.Join("data", "..", "metrics.json")}
+	require.NoError(t, parseFilePath(cfg))
+	assert.Equal(t, "metrics.json", cfg.FileStoragePath)
+
+	cfg = &ServerConfig{FileStoragePath: tmpDir}
+	require.Error(t, parseFilePath(cfg))
 }
 
 func TestValidateDSN(t *testing.T) {
@@ -119,46 +129,12 @@ func TestValidateDSN(t *testing.T) {
 func TestParseAuditFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	tests := []struct {
-		name      string
-		inputPath string
-		wantPath  string
-		wantErr   bool
-	}{
-		{
-			name:      "empty path is allowed",
-			inputPath: "",
-			wantPath:  "",
-		},
-		{
-			name:      "existing directory returns error",
-			inputPath: tmpDir,
-			wantErr:   true,
-		},
-		{
-			name:      "simple relative path is unchanged",
-			inputPath: filepath.Join("data", "audit.log"),
-			wantPath:  filepath.Join("data", "audit.log"),
-		},
-		{
-			name:      "absolute path to non-existing file is accepted",
-			inputPath: filepath.Join(tmpDir, "audit.log"),
-			wantPath:  filepath.Join(tmpDir, "audit.log"),
-		},
-	}
+	cfg := &ServerConfig{Audit: AuditConfig{File: filepath.Join("data", "audit.log")}}
+	require.NoError(t, parseAuditFilePath(cfg))
+	assert.Equal(t, filepath.Join("data", "audit.log"), cfg.Audit.File)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &ServerConfig{Audit: AuditConfig{File: tt.inputPath}}
-			err := parseAuditFilePath(cfg)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantPath, cfg.Audit.File)
-		})
-	}
+	cfg = &ServerConfig{Audit: AuditConfig{File: tmpDir}}
+	require.Error(t, parseAuditFilePath(cfg))
 }
 
 func TestValidateAuditURL(t *testing.T) {
