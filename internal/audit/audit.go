@@ -14,4 +14,5 @@ func NewEvent(metrics []string, addr string) Event {
 
 type Observer interface {
 	Notify(event Event) error
+	Name() string
 }
