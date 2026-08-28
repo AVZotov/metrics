@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -43,6 +44,12 @@ func NewServerConfig() (*ServerConfig, error) {
 		return nil, err
 	}
 	if err := validateDSN(conf); err != nil {
+		return nil, err
+	}
+	if err := parseAuditFilePath(conf); err != nil {
+		return nil, err
+	}
+	if err := validateAuditURL(conf); err != nil {
 		return nil, err
 	}
 	return conf, nil
@@ -113,5 +120,35 @@ func validateDSN(cfg *ServerConfig) error {
 	if cfg.DSNSet && cfg.DSN == "" {
 		return errors.New("database DSN explicitly provided but is empty")
 	}
+	return nil
+}
+
+func parseAuditFilePath(cfg *ServerConfig) error {
+	if cfg.Audit.File == "" {
+		return nil
+	}
+	cleaned := filepath.Clean(cfg.Audit.File)
+
+	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
+		return errors.New("path must point to a file, not a directory")
+	}
+
+	cfg.Audit.File = cleaned
+	return nil
+}
+
+func validateAuditURL(cfg *ServerConfig) error {
+	if cfg.Audit.URL == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(cfg.Audit.URL)
+	if err != nil {
+		return fmt.Errorf("audit URL is invalid: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("audit URL must be an absolute URL with scheme and host")
+	}
+
 	return nil
 }

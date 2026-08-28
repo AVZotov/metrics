@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	
+
 	models "github.com/AVZotov/metrics/internal/model"
 )
 

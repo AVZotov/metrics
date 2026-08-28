@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AVZotov/metrics/internal/audit"
+	"github.com/AVZotov/metrics/internal/config"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -28,14 +30,14 @@ type mockService struct {
 	getAllFn        func() ([]*models.Metrics, error)
 }
 
-func (m *mockService) UpdateMetric(mType, name, value string) error {
+func (m *mockService) UpdateMetric(mType, name, value, _ string) error {
 	if m.updateFn != nil {
 		return m.updateFn(mType, name, value)
 	}
 	return nil
 }
 
-func (m *mockService) UpdateMetrics(metrics []models.Metrics) error {
+func (m *mockService) UpdateMetrics(metrics []models.Metrics, _ string) error {
 	if m.updateMetricsFn != nil {
 		return m.updateMetricsFn(metrics)
 	}
@@ -71,7 +73,8 @@ func setupRouter(t *testing.T) chi.Router {
 	file, err := repository.NewFileStore("metrics.json", t.TempDir())
 	require.NoError(t, err)
 	store := repository.NewStore(repository.NewMemStore(), file, false)
-	s := service.NewMetricsService(store)
+	notifier := audit.NewNotifier(&config.AuditConfig{}, zap.NewNop())
+	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
 	return NewRouter(h, logger, "")

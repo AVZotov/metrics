@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"strconv"
-	
+
 	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -33,24 +33,24 @@ func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string)
 	if name == "" {
 		return errors.ErrEmptyMetricName
 	}
-	
+
 	if metricType == "" {
 		return errors.ErrEmptyMetricType
 	}
-	
+
 	if metricType != models.Counter && metricType != models.Gauge {
 		return errors.ErrUnknownMetricType
 	}
-	
+
 	if value == "" {
 		return errors.ErrEmptyMetricValue
 	}
-	
+
 	metrics := &models.Metrics{
 		ID:    name,
 		MType: metricType,
 	}
-	
+
 	switch metrics.MType {
 	case models.Counter:
 		v, err := parseInt(value)
@@ -65,14 +65,14 @@ func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string)
 		}
 		metrics.Value = &v
 	}
-	
+
 	if err := m.repository.Save(metrics); err != nil {
 		return err
 	}
-	
+
 	event := audit.NewEvent([]string{metrics.ID}, ipAddress)
 	m.notifier.Notify(event)
-	
+
 	return nil
 }
 
@@ -81,7 +81,7 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress strin
 	auditNames := make([]string, 0, len(metrics))
 	for i := range metrics {
 		mm := metrics[i]
-		
+
 		if mm.ID == "" {
 			return errors.ErrEmptyMetricName
 		}
@@ -94,17 +94,17 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress strin
 		if mm.MType == models.Gauge && mm.Value == nil {
 			return errors.ErrEmptyMetricValue
 		}
-		
+
 		toSave = append(toSave, &mm)
 		auditNames = append(auditNames, mm.ID)
 	}
-	
+
 	if err := m.repository.SaveAll(toSave); err != nil {
 		return err
 	}
 	event := audit.NewEvent(auditNames, ipAddress)
 	m.notifier.Notify(event)
-	
+
 	return nil
 }
 

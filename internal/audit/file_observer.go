@@ -46,3 +46,7 @@ func (f *fileObserver) Notify(event Event) error {
 func (f *fileObserver) Name() string {
 	return f.name
 }
+
+func (f *fileObserver) Close() error {
+	return f.file.Close()
+}

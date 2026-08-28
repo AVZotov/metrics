@@ -1,6 +1,11 @@
 package audit
 
 import (
+	"context"
+	"errors"
+	"io"
+	"sync"
+
 	"github.com/AVZotov/metrics/internal/config"
 	"go.uber.org/zap"
 )
@@ -8,6 +13,7 @@ import (
 type Notifier struct {
 	observers []Observer
 	logger    *zap.Logger
+	wg        sync.WaitGroup
 }
 
 func NewNotifier(cfg *config.AuditConfig, logger *zap.Logger) *Notifier {
@@ -37,9 +43,45 @@ func (n *Notifier) register(o Observer) {
 }
 
 func (n *Notifier) Notify(e Event) {
+	if n == nil {
+		return
+	}
+
 	for _, observer := range n.observers {
-		if err := observer.Notify(e); err != nil {
-			n.logger.Warn("audit observer failed", zap.String("observer", observer.Name()), zap.Error(err))
+		n.wg.Add(1)
+		go func(o Observer) {
+			defer n.wg.Done()
+			if err := o.Notify(e); err != nil {
+				n.logger.Warn("audit observer failed", zap.String("observer", o.Name()), zap.Error(err))
+			}
+		}(observer)
+	}
+}
+
+func (n *Notifier) Shutdown(ctx context.Context) error {
+	if n == nil {
+		return nil
+	}
+	var shutdownErr error
+	done := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		n.logger.Warn("audit shutdown timed out, some events may be lost")
+		return ctx.Err()
+	}
+
+	for _, o := range n.observers {
+		if closer, ok := o.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				n.logger.Warn("failed to close audit observer", zap.String("observer", o.Name()), zap.Error(err))
+				shutdownErr = errors.Join(shutdownErr, err)
+			}
 		}
 	}
+	return shutdownErr
 }

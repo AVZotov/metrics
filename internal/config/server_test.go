@@ -116,6 +116,97 @@ func TestValidateDSN(t *testing.T) {
 	}
 }
 
+func TestParseAuditFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name      string
+		inputPath string
+		wantPath  string
+		wantErr   bool
+	}{
+		{
+			name:      "empty path is allowed",
+			inputPath: "",
+			wantPath:  "",
+		},
+		{
+			name:      "existing directory returns error",
+			inputPath: tmpDir,
+			wantErr:   true,
+		},
+		{
+			name:      "simple relative path is unchanged",
+			inputPath: filepath.Join("data", "audit.log"),
+			wantPath:  filepath.Join("data", "audit.log"),
+		},
+		{
+			name:      "absolute path to non-existing file is accepted",
+			inputPath: filepath.Join(tmpDir, "audit.log"),
+			wantPath:  filepath.Join(tmpDir, "audit.log"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ServerConfig{Audit: AuditConfig{File: tt.inputPath}}
+			err := parseAuditFilePath(cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, cfg.Audit.File)
+		})
+	}
+}
+
+func TestValidateAuditURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{
+			name:    "empty URL is allowed",
+			url:     "",
+			wantErr: false,
+		},
+		{
+			name:    "valid absolute URL",
+			url:     "http://example.com/audit",
+			wantErr: false,
+		},
+		{
+			name:    "missing scheme and host is an error",
+			url:     "not-a-url",
+			wantErr: true,
+		},
+		{
+			name:    "missing host is an error",
+			url:     "http://",
+			wantErr: true,
+		},
+		{
+			name:    "malformed URL is an error",
+			url:     "http://[::1",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ServerConfig{Audit: AuditConfig{URL: tt.url}}
+			err := validateAuditURL(cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestParseServerEnv(t *testing.T) {
 	tests := []struct {
 		name            string

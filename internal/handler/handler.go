@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
-	
+
 	e "github.com/AVZotov/metrics/internal/errors"
 	"github.com/AVZotov/metrics/internal/handler/templates"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -34,7 +35,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	mType := chi.URLParam(r, "type")
 	mName := chi.URLParam(r, "name")
 	mValue := chi.URLParam(r, "value")
-	if err := h.service.UpdateMetric(mType, mName, mValue); err != nil {
+	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
+	}
+
+	if err := h.service.UpdateMetric(mType, mName, mValue, ipAddress); err != nil {
 		if errors.Is(err, e.ErrEmptyMetricName) {
 			h.logger.Info("metric not found", zap.String("name", mName))
 			w.WriteHeader(http.StatusNotFound)
@@ -116,6 +122,11 @@ func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to decode json", zap.Error(err))
 		return
 	}
+	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
+	}
+
 	switch m.MType {
 	case models.Counter:
 		if m.Delta == nil {
@@ -123,7 +134,7 @@ func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error("counter delta is nil", zap.String("metric", m.ID))
 			return
 		}
-		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatInt(*m.Delta, 10)); err != nil {
+		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatInt(*m.Delta, 10), ipAddress); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			h.logger.Error("failed to update metric", zap.Error(err))
 			return
@@ -134,7 +145,9 @@ func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error("gauge value is nil", zap.String("metric", m.ID))
 			return
 		}
-		if err := h.service.UpdateMetric(m.MType, m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64)); err != nil {
+		if err := h.service.UpdateMetric(
+			m.MType, m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64), ipAddress,
+		); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			h.logger.Error("failed to update metric", zap.Error(err))
 			return
@@ -205,7 +218,12 @@ func (h *Handler) updatesJSON(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := h.service.UpdateMetrics(m); err != nil {
+	ipAddress, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		h.logger.Warn("invalid remote address", zap.String("address", r.RemoteAddr))
+	}
+
+	if err := h.service.UpdateMetrics(m, ipAddress); err != nil {
 		h.logger.Error("failed to update metrics", zap.Error(err))
 		if errors.Is(err, e.ErrEmptyMetricName) ||
 			errors.Is(err, e.ErrUnknownMetricType) ||
