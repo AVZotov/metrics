@@ -12,6 +12,11 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+type AuditConfig struct {
+	File string `env:"AUDIT_FILE"`
+	URL  string `env:"AUDIT_URL"`
+}
+
 type ServerConfig struct {
 	Address             `env:"ADDRESS"`
 	StoreInterval       int    `env:"STORE_INTERVAL"`
@@ -22,6 +27,7 @@ type ServerConfig struct {
 	DSNSet              bool
 	DB                  dbcfg.Config
 	Key                 string `env:"KEY"`
+	Audit               AuditConfig
 }
 
 func NewServerConfig() (*ServerConfig, error) {
@@ -59,6 +65,8 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.StringVar(&config.FileStoragePath, "f", FileStoragePath, "store path")
 	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
 	flag.StringVar(&config.Key, "k", "", "signing key")
+	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")
+	flag.StringVar(&config.Audit.URL, "audit-url", "", "URL to send audit events")
 
 	flag.Parse()
 
