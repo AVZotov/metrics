@@ -2,6 +2,7 @@ package handler
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
 
@@ -13,6 +14,7 @@ func NewRouter(h *Handler, logger *zap.Logger, key string) *chi.Mux {
 }
 
 func register(mux *chi.Mux, h *Handler, key string) {
+	mux.Mount("/debug", middleware.Profiler())
 	mux.Get("/", h.getAll)
 	mux.Get("/ping", h.ping)
 
