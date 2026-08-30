@@ -42,3 +42,28 @@ git fetch template && git checkout template/v2 .github
 - **Clean Architecture**
 - **Hexagonal Architecture**
 - **Layered Architecture**
+
+## Профилирование памяти (Спринт 6)
+
+Сервер нагрузил с помощью `hey` — отправлял батч из 29 метрик, заранее сгенеророванных, на POST /updates, как это делает агент. профиль снял через pprof, сохранил в `profiles/base.pprof`.
+
+### Находка №1
+
+`gzip.Writer` создаётся заново на каждый HTTP-запрос. Это 71.55% (9025.86kB) всей памяти в профиле — проверил через `top`, `list`, `peek` и граф `web`
+
+Место: [internal/handler/middleware.go](internal/handler/middleware.go), функция `responseCompressedWriter.checkContentType()` — там вызывается `gzip.NewWriter()` на каждый запрос.
+
+### Находка №2
+
+В [internal/service/metricsservice.go](internal/service/metricsservice.go), в `UpdateMetrics`, строка `mm := metrics[i]`, а потом `toSave = append(toSave, &mm)` — из-за этого каждая метрика в батче лишний раз убегает в кучу. Проверил через `BenchmarkUpdateMetrics` — аллокации растут примерно 1:1 с размером батча
+
+### Что буду чинить
+
+- переиспользовать `gzip.Writer` через `sync.Pool` вместо создания нового на каждый запрос;
+- убрать лишнюю копию структуры в цикле `UpdateMetrics` — брать адрес прямо из элемента слайса, без локальной копии.
+
+### До/после
+
+TODO: добавить сюда результат сравнения после оптимизации (`pprof -top -diff_base=profiles/base.pprof profiles/result.pprof`).
+
+Граф вызовов лежит в `profiles/base_graph.svg`.
