@@ -6,8 +6,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/sign"
 	"go.uber.org/zap"
 )
@@ -36,6 +37,12 @@ type responseCompressedWriter struct {
 	enabled bool
 }
 
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
 func (w *responseCompressedWriter) checkContentType() {
 	if w.checked {
 		return
@@ -43,7 +50,8 @@ func (w *responseCompressedWriter) checkContentType() {
 	w.checked = true
 	ct := w.Header().Get("Content-Type")
 	if strings.Contains(ct, "application/json") || strings.Contains(ct, "text/html") {
-		w.gw = gzip.NewWriter(w.ResponseWriter)
+		w.gw = gzipWriterPool.Get().(*gzip.Writer)
+		w.gw.Reset(w.ResponseWriter)
 		w.Header().Set("Content-Encoding", "gzip")
 		w.enabled = true
 	}
@@ -137,6 +145,9 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 					defer func() {
 						if cw.gw != nil {
 							cw.gw.Close()
+							//Дополнительный сброс для того что бы отвязать от хранящего данные w.ResponceWriter
+							cw.gw.Reset(io.Discard)
+							gzipWriterPool.Put(cw.gw)
 						}
 					}()
 					next.ServeHTTP(cw, r)
@@ -156,9 +167,9 @@ func SignMiddleware(key string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-
+				
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
+				
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err != nil {
 					sw.WriteHeader(http.StatusBadRequest)
@@ -166,14 +177,14 @@ func SignMiddleware(key string) func(http.Handler) http.Handler {
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
+				
 				signature := r.Header.Get("HashSHA256")
 				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
 				}
-
+				
 				next.ServeHTTP(sw, r)
 				finalizeSignedResponse(w, sw, key)
 			},
