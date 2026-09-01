@@ -1,3 +1,5 @@
+// Package models defines the Metrics data model shared across the agent,
+// server, repository, and service layers.
 package models
 
 const (

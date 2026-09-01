@@ -1,3 +1,5 @@
+// Command server runs the HTTP API that receives metrics from agents,
+// persists them (in memory, to a file, or to Postgres), and serves them back.
 package main
 
 import (

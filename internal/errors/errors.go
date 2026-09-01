@@ -1,3 +1,6 @@
+// Package errors defines sentinel errors and custom error types shared
+// across the agent and server, used to classify failures (validation,
+// retriable network/status errors, etc.) without string matching.
 package errors
 
 import (

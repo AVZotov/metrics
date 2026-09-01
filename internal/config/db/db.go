@@ -1,3 +1,4 @@
+// Package db holds configuration shared by database-backed repository code.
 package db
 
 import "time"

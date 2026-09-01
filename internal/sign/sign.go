@@ -1,3 +1,5 @@
+// Package sign implements HMAC-SHA256 signing and verification used to
+// authenticate requests between the agent and server.
 package sign
 
 import (

@@ -1,3 +1,5 @@
+// Package dto converts metrics into flat, display-ready structures for the
+// HTML metrics page.
 package dto
 
 import (
