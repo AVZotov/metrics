@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/sign"
 	"go.uber.org/zap"
 )
@@ -167,9 +167,9 @@ func SignMiddleware(key string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-				
+
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-				
+
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err != nil {
 					sw.WriteHeader(http.StatusBadRequest)
@@ -177,14 +177,14 @@ func SignMiddleware(key string) func(http.Handler) http.Handler {
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-				
+
 				signature := r.Header.Get("HashSHA256")
 				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
 				}
-				
+
 				next.ServeHTTP(sw, r)
 				finalizeSignedResponse(w, sw, key)
 			},

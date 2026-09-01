@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -93,7 +93,7 @@ func (d *FileStore) GetAll() ([]*models.Metrics, error) {
 		return nil, err
 	}
 	defer file.Close()
-	
+
 	if err = json.NewDecoder(file).Decode(&metrics); err != nil {
 		if errors.Is(err, io.EOF) {
 			return metrics, nil
