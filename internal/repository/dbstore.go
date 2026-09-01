@@ -17,11 +17,15 @@ import (
 
 var _ PersistRepository = (*DBStore)(nil)
 
+// DBStore is a PersistRepository backed by PostgreSQL via pgxpool. Recoverable
+// connection errors (class 08) are retried before failing.
 type DBStore struct {
 	pool *pgxpool.Pool
 	cfg  *db.Config
 }
 
+// NewDBStore opens a connection pool to dsn and pings it. Returns an error
+// if the pool can't be created or the initial ping fails.
 func NewDBStore(ctx context.Context, dsn string, cfg *db.Config) (*DBStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -36,6 +40,7 @@ func NewDBStore(ctx context.Context, dsn string, cfg *db.Config) (*DBStore, erro
 	}, nil
 }
 
+// Save upserts a single metric. Returns an error if the query fails after retries.
 func (d *DBStore) Save(metrics *models.Metrics) error {
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
@@ -53,6 +58,8 @@ func (d *DBStore) Save(metrics *models.Metrics) error {
 	)
 }
 
+// Get reads a single metric by id and type. Returns apperrors.ErrNotFound
+// if no row matches, or another error if the query fails after retries.
 func (d *DBStore) Get(id, mType string) (*models.Metrics, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
@@ -79,6 +86,7 @@ func (d *DBStore) Get(id, mType string) (*models.Metrics, error) {
 	return m, nil
 }
 
+// GetAll returns every stored metric. Returns an error if the query fails after retries.
 func (d *DBStore) GetAll() ([]*models.Metrics, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d.cfg.QueryTimeout)
 	defer cancel()
@@ -170,11 +178,13 @@ func (d *DBStore) SaveAll(metrics []*models.Metrics) error {
 	)
 }
 
+// Close closes the connection pool.
 func (d *DBStore) Close() error {
 	d.pool.Close()
 	return nil
 }
 
+// Ping checks that the database is reachable.
 func (d *DBStore) Ping(ctx context.Context) error {
 	return d.pool.Ping(ctx)
 }

@@ -13,11 +13,14 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+// AuditConfig holds where audit events are sent: a file path, a URL, or both.
 type AuditConfig struct {
 	File string `env:"AUDIT_FILE"`
 	URL  string `env:"AUDIT_URL"`
 }
 
+// ServerConfig holds the server's runtime configuration, populated from
+// flags and environment variables (env vars take precedence).
 type ServerConfig struct {
 	Address             `env:"ADDRESS"`
 	StoreInterval       int    `env:"STORE_INTERVAL"`
@@ -31,6 +34,9 @@ type ServerConfig struct {
 	Audit               AuditConfig
 }
 
+// NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
+// Returns an error if flag parsing fails, the DSN is explicitly set but
+// empty, or the audit file path or audit URL is invalid.
 func NewServerConfig() (*ServerConfig, error) {
 	conf := new(ServerConfig)
 	setServerDefaults(conf)

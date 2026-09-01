@@ -9,6 +9,8 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+// AgentConfig holds the agent's runtime configuration, populated from
+// flags and environment variables (env vars take precedence).
 type AgentConfig struct {
 	Address        `env:"ADDRESS"`
 	PollInterval   uint   `env:"POLL_INTERVAL"`
@@ -17,6 +19,9 @@ type AgentConfig struct {
 	Key            string `env:"KEY"`
 }
 
+// NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
+// Returns an error if flag parsing fails or poll interval, report interval,
+// or rate limit end up zero.
 func NewAgentConfig() (*AgentConfig, error) {
 	conf := new(AgentConfig)
 	setAgentDefaults(conf)

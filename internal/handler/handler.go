@@ -18,11 +18,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// Handler parses HTTP requests, calls the service layer, and writes responses.
 type Handler struct {
 	service service.PersistService
 	logger  *zap.Logger
 }
 
+// New creates a Handler backed by the given service and logger.
 func New(s service.PersistService, l *zap.Logger) *Handler {
 	return &Handler{
 		service: s,

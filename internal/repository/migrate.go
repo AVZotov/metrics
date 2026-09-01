@@ -12,6 +12,8 @@ import (
 	"github.com/AVZotov/metrics"
 )
 
+// RunMigrations applies all embedded goose migrations against dsn. Returns
+// an error if the connection fails or any migration fails to apply.
 func RunMigrations(ctx context.Context, dsn string) error {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

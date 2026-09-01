@@ -6,6 +6,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// NewRouter builds the chi router with logging middleware and all metric
+// routes registered against h. key enables request signing/verification when non-empty.
 func NewRouter(h *Handler, logger *zap.Logger, key string) *chi.Mux {
 	mux := chi.NewMux()
 	mux.Use(loggingMiddleware(logger))

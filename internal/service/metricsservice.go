@@ -17,11 +17,13 @@ type metricsRepository interface {
 	repository.Pinger
 }
 
+// MetricsService validates and persists metrics, and audits every write.
 type MetricsService struct {
 	repository metricsRepository
 	notifier   *audit.Notifier
 }
 
+// NewMetricsService creates a MetricsService backed by r, auditing writes via n.
 func NewMetricsService(r metricsRepository, n *audit.Notifier) *MetricsService {
 	return &MetricsService{
 		repository: r,
@@ -29,6 +31,11 @@ func NewMetricsService(r metricsRepository, n *audit.Notifier) *MetricsService {
 	}
 }
 
+// UpdateMetric validates and saves a single metric given as strings, then
+// audits the write. Returns errors.ErrEmptyMetricName/ErrEmptyMetricType/ErrEmptyMetricValue
+// if a required field is blank, errors.ErrUnknownMetricType for an
+// unrecognized type, errors.ErrUnknownMetricValue if value can't be
+// parsed, or a repository error if the save fails.
 func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string) error {
 	if name == "" {
 		return errors.ErrEmptyMetricName
@@ -76,6 +83,9 @@ func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string)
 	return nil
 }
 
+// UpdateMetrics validates and saves a batch of metrics, then audits the
+// write. Returns errors.ErrEmptyMetricName/ErrUnknownMetricType/ErrEmptyMetricValue
+// if any metric is invalid, or a repository error if the save fails.
 func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress string) error {
 	toSave := make([]*models.Metrics, 0, len(metrics))
 	auditNames := make([]string, 0, len(metrics))
@@ -108,14 +118,18 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress strin
 	return nil
 }
 
+// GetMetric looks up a single metric by id and type. Returns
+// errors.ErrNotFound if it doesn't exist.
 func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {
 	return m.repository.Get(id, mType)
 }
 
+// GetMetrics returns every stored metric.
 func (m *MetricsService) GetMetrics() ([]*models.Metrics, error) {
 	return m.repository.GetAll()
 }
 
+// Ping checks that the backing repository is reachable.
 func (m *MetricsService) Ping(ctx context.Context) error {
 	return m.repository.Ping(ctx)
 }

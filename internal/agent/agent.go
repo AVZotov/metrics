@@ -21,6 +21,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
+// Agent collects runtime and system metrics and reports them to the server.
 type Agent struct {
 	mu      sync.Mutex
 	client  *http.Client
@@ -31,6 +32,8 @@ type Agent struct {
 	cpuWarm sync.Once
 }
 
+// NewAgent creates an Agent that sends metrics to baseURL using client.
+// If key is non-empty, outgoing requests are signed with it.
 func NewAgent(client *http.Client, baseURL string, key string) *Agent {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
@@ -43,6 +46,7 @@ func NewAgent(client *http.Client, baseURL string, key string) *Agent {
 	}
 }
 
+// Collect reads runtime.MemStats and updates the agent's gauge and counter values.
 func (a *Agent) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -81,7 +85,10 @@ func (a *Agent) Collect() {
 	a.counter["PollCount"]++
 }
 
-// CollectGopsutil polls system
+// CollectGopsutil polls system memory and per-core CPU usage via gopsutil.
+// The first call includes a throw-away warm-up read of cpu.Percent, since
+// its first real measurement needs a baseline to compare against.
+// Returns an error if reading memory or CPU stats fails.
 func (a *Agent) CollectGopsutil() error {
 	a.cpuWarm.Do(func() {
 		_, _ = cpu.Percent(0, true)
@@ -113,12 +120,16 @@ func (a *Agent) Report(ctx context.Context) error {
 	return a.SendWithRetry(ctx, a.Snapshot())
 }
 
+// Snapshot returns the current gauge and counter values as a metrics slice.
 func (a *Agent) Snapshot() []models.Metrics {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return toMetricsSlice(a.gauge, a.counter)
 }
 
+// SendWithRetry sends metrics to the server, retrying on recoverable errors
+// (network failures, 5xx responses) until ctx is done. Returns an error if
+// all retries are exhausted or the failure is non-recoverable.
 func (a *Agent) SendWithRetry(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil

@@ -10,12 +10,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// Notifier fans out audit events to a set of registered observers.
 type Notifier struct {
 	observers []Observer
 	logger    *zap.Logger
 	wg        sync.WaitGroup
 }
 
+// NewNotifier builds a Notifier and registers a file and/or HTTP observer
+// based on cfg. A failed file observer setup is logged and skipped, not fatal.
 func NewNotifier(cfg *config.AuditConfig, logger *zap.Logger) *Notifier {
 	observers := make([]Observer, 0)
 	n := Notifier{
@@ -42,6 +45,8 @@ func (n *Notifier) register(o Observer) {
 	n.observers = append(n.observers, o)
 }
 
+// Notify sends the event to all registered observers concurrently. Safe to
+// call on a nil Notifier (no-op). Observer errors are logged, not returned.
 func (n *Notifier) Notify(e Event) {
 	if n == nil {
 		return
@@ -58,6 +63,9 @@ func (n *Notifier) Notify(e Event) {
 	}
 }
 
+// Shutdown waits for in-flight notifications to finish and closes any
+// observers that implement io.Closer. Returns ctx.Err() if ctx is done
+// before pending notifications complete, or a joined error if closing any observer fails.
 func (n *Notifier) Shutdown(ctx context.Context) error {
 	if n == nil {
 		return nil

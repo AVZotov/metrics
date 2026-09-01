@@ -9,12 +9,15 @@ import (
 
 var _ Repository = (*MemStore)(nil)
 
+// MemStore is an in-memory Repository. Counter values accumulate on Save;
+// gauge values are overwritten.
 type MemStore struct {
 	mu      sync.RWMutex
 	gauge   map[string]models.Metrics
 	counter map[string]models.Metrics
 }
 
+// NewMemStore creates an empty MemStore.
 func NewMemStore() *MemStore {
 	return &MemStore{
 		gauge:   make(map[string]models.Metrics),
@@ -22,12 +25,16 @@ func NewMemStore() *MemStore {
 	}
 }
 
+// Save stores metrics, accumulating the delta if it's a counter. Returns
+// errors.ErrNilMetric, errors.ErrNilDelta/ErrNilValue, or errors.ErrUnknownMetricType as appropriate.
 func (m *MemStore) Save(metrics *models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.save(metrics)
 }
 
+// Get returns a single metric by id and type. Returns errors.ErrNotFound if
+// it doesn't exist, or errors.ErrUnknownMetricType for an unrecognized mType.
 func (m *MemStore) Get(id, mType string) (*models.Metrics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -49,6 +56,7 @@ func (m *MemStore) Get(id, mType string) (*models.Metrics, error) {
 	}
 }
 
+// GetAll returns every stored gauge and counter metric.
 func (m *MemStore) GetAll() ([]*models.Metrics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -64,6 +72,7 @@ func (m *MemStore) GetAll() ([]*models.Metrics, error) {
 	return result, nil
 }
 
+// SaveAll saves each metric in order, stopping at the first error.
 func (m *MemStore) SaveAll(metrics []*models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
