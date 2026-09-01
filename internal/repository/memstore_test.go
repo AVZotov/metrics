@@ -246,6 +246,28 @@ func TestMemStorage_SaveAll(t *testing.T) {
 	)
 
 	t.Run(
+		"does not mutate caller's Delta pointer when accumulating against existing counter", func(t *testing.T) {
+			s := NewMemStore()
+			existing := int64(5)
+			require.NoError(t, s.Save(&models.Metrics{ID: "hits", MType: models.Counter, Delta: &existing}))
+
+			callerDelta := int64(3)
+			callerOwned := []models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &callerDelta},
+			}
+			toSave := []*models.Metrics{&callerOwned[0]}
+
+			require.NoError(t, s.SaveAll(toSave))
+
+			assert.Equal(t, int64(3), callerDelta, "caller's original Delta must be unchanged after SaveAll")
+
+			got, err := s.Get("hits", models.Counter)
+			require.NoError(t, err)
+			assert.Equal(t, int64(8), *got.Delta, "store must still hold the accumulated total")
+		},
+	)
+
+	t.Run(
 		"stops on first error", func(t *testing.T) {
 			s := NewMemStore()
 			metrics := []*models.Metrics{

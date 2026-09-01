@@ -80,7 +80,7 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress strin
 	toSave := make([]*models.Metrics, 0, len(metrics))
 	auditNames := make([]string, 0, len(metrics))
 	for i := range metrics {
-		mm := metrics[i]
+		mm := &metrics[i]
 
 		if mm.ID == "" {
 			return errors.ErrEmptyMetricName
@@ -95,7 +95,7 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress strin
 			return errors.ErrEmptyMetricValue
 		}
 
-		toSave = append(toSave, &mm)
+		toSave = append(toSave, mm)
 		auditNames = append(auditNames, mm.ID)
 	}
 

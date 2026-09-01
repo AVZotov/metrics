@@ -87,11 +87,13 @@ func (m *MemStore) save(metrics *models.Metrics) error {
 		if metrics.Delta == nil {
 			return errors.ErrNilDelta
 		}
-		mm, ok := m.counter[metrics.ID]
-		if ok && mm.Delta != nil {
-			*metrics.Delta += *mm.Delta
+		total := *metrics.Delta
+		if mm, ok := m.counter[metrics.ID]; ok && mm.Delta != nil {
+			total += *mm.Delta
 		}
-		m.counter[metrics.ID] = *metrics
+		stored := *metrics
+		stored.Delta = &total
+		m.counter[metrics.ID] = stored
 	case models.Gauge:
 		if metrics.Value == nil {
 			return errors.ErrNilValue
