@@ -56,20 +56,20 @@ func NewServerConfig() (*ServerConfig, error) {
 }
 
 func setServerDefaults(s *ServerConfig) {
-	s.Host = Host
-	s.Port = Port
-	s.StoreInterval = StoreInterval
-	s.Restore = Restore
-	s.FileStoragePath = FileStoragePath
-	s.ShutdownGracePeriod = ServerShutdownGracePeriod
-	s.DB = dbcfg.Config{ConnectTimeout: DBConnectTimeout, QueryTimeout: DBQueryTimeout}
+	s.Host = host
+	s.Port = port
+	s.StoreInterval = storeInterval
+	s.Restore = restore
+	s.FileStoragePath = fileStoragePath
+	s.ShutdownGracePeriod = serverShutdownGracePeriod
+	s.DB = dbcfg.Config{ConnectTimeout: dbConnectTimeout, QueryTimeout: dbQueryTimeout}
 }
 
 func parseServerFlags(config *ServerConfig) error {
 	flag.Var(&config.Address, "a", "address in form host:port")
-	flag.IntVar(&config.StoreInterval, "i", StoreInterval, "metrics save interval in seconds")
-	flag.BoolVar(&config.Restore, "r", Restore, "restore store on server restart")
-	flag.StringVar(&config.FileStoragePath, "f", FileStoragePath, "store path")
+	flag.IntVar(&config.StoreInterval, "i", storeInterval, "metrics save interval in seconds")
+	flag.BoolVar(&config.Restore, "r", restore, "restore store on server restart")
+	flag.StringVar(&config.FileStoragePath, "f", fileStoragePath, "store path")
 	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
 	flag.StringVar(&config.Key, "k", "", "signing key")
 	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")

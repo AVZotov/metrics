@@ -3,15 +3,15 @@ package config
 import "time"
 
 const (
-	Host                      = "localhost"
-	Port                      = 8080
-	PollInterval              = 2
-	ReportInterval            = 10
-	RateLimit                 = 1
-	StoreInterval             = 300
-	FileStoragePath           = "data/metrics.json"
-	Restore                   = true
-	ServerShutdownGracePeriod = 1
-	DBConnectTimeout          = 2 * time.Second
-	DBQueryTimeout            = 2 * time.Second
+	host                      = "localhost"
+	port                      = 8080
+	pollInterval              = 2
+	reportInterval            = 10
+	rateLimit                 = 1
+	storeInterval             = 300
+	fileStoragePath           = "data/metrics.json"
+	restore                   = true
+	serverShutdownGracePeriod = 1
+	dbConnectTimeout          = 2 * time.Second
+	dbQueryTimeout            = 2 * time.Second
 )

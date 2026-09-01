@@ -19,11 +19,11 @@ func TestSetAgentDefaults(t *testing.T) {
 	cfg := &AgentConfig{}
 	setAgentDefaults(cfg)
 
-	assert.Equal(t, Host, cfg.Host)
-	assert.Equal(t, Port, cfg.Port)
-	assert.Equal(t, uint(PollInterval), cfg.PollInterval)
-	assert.Equal(t, uint(ReportInterval), cfg.ReportInterval)
-	assert.Equal(t, uint(RateLimit), cfg.RateLimit)
+	assert.Equal(t, host, cfg.Host)
+	assert.Equal(t, port, cfg.Port)
+	assert.Equal(t, uint(pollInterval), cfg.PollInterval)
+	assert.Equal(t, uint(reportInterval), cfg.ReportInterval)
+	assert.Equal(t, uint(rateLimit), cfg.RateLimit)
 }
 
 func TestValidateAgentConfig(t *testing.T) {
@@ -79,24 +79,24 @@ func TestParseAgentEnv(t *testing.T) {
 	}{
 		{
 			name:       "no env vars preserves defaults",
-			wantHost:   Host,
-			wantPort:   Port,
-			wantPoll:   PollInterval,
-			wantReport: ReportInterval,
+			wantHost:   host,
+			wantPort:   port,
+			wantPoll:   pollInterval,
+			wantReport: reportInterval,
 		},
 		{
 			name:       "ADDRESS overrides host and port",
 			envVars:    map[string]string{"ADDRESS": "localhost:9090"},
 			wantHost:   "localhost",
 			wantPort:   9090,
-			wantPoll:   PollInterval,
-			wantReport: ReportInterval,
+			wantPoll:   pollInterval,
+			wantReport: reportInterval,
 		},
 		{
 			name:       "POLL_INTERVAL and REPORT_INTERVAL override defaults",
 			envVars:    map[string]string{"POLL_INTERVAL": "5", "REPORT_INTERVAL": "30"},
-			wantHost:   Host,
-			wantPort:   Port,
+			wantHost:   host,
+			wantPort:   port,
 			wantPoll:   5,
 			wantReport: 30,
 		},
@@ -160,24 +160,24 @@ func TestParseAgentFlags(t *testing.T) {
 		{
 			name:       "no flags preserves defaults",
 			args:       []string{"cmd"},
-			wantHost:   Host,
-			wantPort:   Port,
-			wantPoll:   PollInterval,
-			wantReport: ReportInterval,
+			wantHost:   host,
+			wantPort:   port,
+			wantPoll:   pollInterval,
+			wantReport: reportInterval,
 		},
 		{
 			name:       "-a flag overrides address",
 			args:       []string{"cmd", "-a", "localhost:9000"},
 			wantHost:   "localhost",
 			wantPort:   9000,
-			wantPoll:   PollInterval,
-			wantReport: ReportInterval,
+			wantPoll:   pollInterval,
+			wantReport: reportInterval,
 		},
 		{
 			name:       "-p and -r flags override intervals",
 			args:       []string{"cmd", "-p", "4", "-r", "20"},
-			wantHost:   Host,
-			wantPort:   Port,
+			wantHost:   host,
+			wantPort:   port,
 			wantPoll:   4,
 			wantReport: 20,
 		},
