@@ -91,7 +91,7 @@ func finalizeSignedResponse(w http.ResponseWriter, sw *signResponseWriter, key s
 	_, _ = w.Write(sw.buf.Bytes())
 }
 
-func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
+func loggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func ContentTypeMiddleware(contentType string) func(handler http.Handler) http.Handler {
+func contentTypeMiddleware(contentType string) func(handler http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func ContentTypeMiddleware(contentType string) func(handler http.Handler) http.H
 	}
 }
 
-func CompressMiddleware() func(http.Handler) http.Handler {
+func compressMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +159,7 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
-func SignMiddleware(key string) func(http.Handler) http.Handler {
+func signMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {

@@ -8,7 +8,7 @@ import (
 
 func NewRouter(h *Handler, logger *zap.Logger, key string) *chi.Mux {
 	mux := chi.NewMux()
-	mux.Use(LoggingMiddleware(logger))
+	mux.Use(loggingMiddleware(logger))
 	register(mux, h, key)
 	return mux
 }
@@ -19,17 +19,17 @@ func register(mux *chi.Mux, h *Handler, key string) {
 	mux.Get("/ping", h.ping)
 
 	mux.Group(func(mux chi.Router) {
-		mux.Use(SignMiddleware(key))
-		mux.Use(CompressMiddleware())
+		mux.Use(signMiddleware(key))
+		mux.Use(compressMiddleware())
 		mux.Post("/update/{type}/{name}/{value}", h.update)
 		mux.Get("/value/{type}/{name}", h.getValue)
 	})
 
 	mux.Group(
 		func(mux chi.Router) {
-			mux.Use(SignMiddleware(key))
-			mux.Use(CompressMiddleware())
-			mux.Use(ContentTypeMiddleware("application/json"))
+			mux.Use(signMiddleware(key))
+			mux.Use(compressMiddleware())
+			mux.Use(contentTypeMiddleware("application/json"))
 			mux.Post("/update", h.updateJSON)
 			mux.Post("/update/", h.updateJSON)
 			mux.Post("/value", h.valueJSON)

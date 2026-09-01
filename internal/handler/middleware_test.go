@@ -30,7 +30,7 @@ func BenchmarkCompressMiddleware(b *testing.B) {
 							_, _ = w.Write(bm.data)
 						},
 					)
-					handler := CompressMiddleware()(next)
+					handler := compressMiddleware()(next)
 					for b.Loop() {
 						b.StopTimer()
 						req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -67,7 +67,7 @@ func BenchmarkSignMiddleware(b *testing.B) {
 							_, _ = w.Write(bm.data)
 						},
 					)
-					handler := SignMiddleware(key)(next)
+					handler := signMiddleware(key)(next)
 					signature := sign.Sign(bm.data, key)
 					for b.Loop() {
 						b.StopTimer()
