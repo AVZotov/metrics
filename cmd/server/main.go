@@ -83,7 +83,6 @@ func run() error {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-	cancel()
 	wg.Wait()
 	if err := repo.Dump(); err != nil {
 		logger.Error(err.Error())
