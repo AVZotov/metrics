@@ -1,3 +1,5 @@
+// Package dto converts metrics into flat, display-ready structures for the
+// HTML metrics page.
 package dto
 
 import (
@@ -7,15 +9,18 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 )
 
+// MetricsDTO is the flat, display-ready form of a metric used by the HTML page.
 type MetricsDTO struct {
 	Name  string
 	Value string
 }
 
+// String formats the DTO as "name:\tvalue".
 func (m *MetricsDTO) String() string {
 	return fmt.Sprintf("%s:\t%s", m.Name, m.Value)
 }
 
+// GetMetricsDTOs converts a slice of metrics into their display DTOs.
 func GetMetricsDTOs(m []*models.Metrics) []MetricsDTO {
 	dtos := make([]MetricsDTO, 0)
 	for _, mm := range m {

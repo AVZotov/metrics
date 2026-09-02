@@ -3,7 +3,8 @@ package service
 import (
 	"context"
 	"strconv"
-	
+
+	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -16,38 +17,47 @@ type metricsRepository interface {
 	repository.Pinger
 }
 
+// MetricsService validates and persists metrics, and audits every write.
 type MetricsService struct {
 	repository metricsRepository
+	notifier   *audit.Notifier
 }
 
-func NewMetricsService(r metricsRepository) *MetricsService {
+// NewMetricsService creates a MetricsService backed by r, auditing writes via n.
+func NewMetricsService(r metricsRepository, n *audit.Notifier) *MetricsService {
 	return &MetricsService{
 		repository: r,
+		notifier:   n,
 	}
 }
 
-func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
+// UpdateMetric validates and saves a single metric given as strings, then
+// audits the write. Returns errors.ErrEmptyMetricName/ErrEmptyMetricType/ErrEmptyMetricValue
+// if a required field is blank, errors.ErrUnknownMetricType for an
+// unrecognized type, errors.ErrUnknownMetricValue if value can't be
+// parsed, or a repository error if the save fails.
+func (m *MetricsService) UpdateMetric(metricType, name, value, ipAddress string) error {
 	if name == "" {
 		return errors.ErrEmptyMetricName
 	}
-	
+
 	if metricType == "" {
 		return errors.ErrEmptyMetricType
 	}
-	
+
 	if metricType != models.Counter && metricType != models.Gauge {
 		return errors.ErrUnknownMetricType
 	}
-	
+
 	if value == "" {
 		return errors.ErrEmptyMetricValue
 	}
-	
+
 	metrics := &models.Metrics{
 		ID:    name,
 		MType: metricType,
 	}
-	
+
 	switch metrics.MType {
 	case models.Counter:
 		v, err := parseInt(value)
@@ -62,19 +72,26 @@ func (m *MetricsService) UpdateMetric(metricType, name, value string) error {
 		}
 		metrics.Value = &v
 	}
-	
+
 	if err := m.repository.Save(metrics); err != nil {
 		return err
 	}
-	
+
+	event := audit.NewEvent([]string{metrics.ID}, ipAddress)
+	m.notifier.Notify(event)
+
 	return nil
 }
 
-func (m *MetricsService) UpdateMetrics(metrics []models.Metrics) error {
+// UpdateMetrics validates and saves a batch of metrics, then audits the
+// write. Returns errors.ErrEmptyMetricName/ErrUnknownMetricType/ErrEmptyMetricValue
+// if any metric is invalid, or a repository error if the save fails.
+func (m *MetricsService) UpdateMetrics(metrics []models.Metrics, ipAddress string) error {
 	toSave := make([]*models.Metrics, 0, len(metrics))
+	auditNames := make([]string, 0, len(metrics))
 	for i := range metrics {
-		mm := metrics[i]
-		
+		mm := &metrics[i]
+
 		if mm.ID == "" {
 			return errors.ErrEmptyMetricName
 		}
@@ -87,21 +104,32 @@ func (m *MetricsService) UpdateMetrics(metrics []models.Metrics) error {
 		if mm.MType == models.Gauge && mm.Value == nil {
 			return errors.ErrEmptyMetricValue
 		}
-		
-		toSave = append(toSave, &mm)
+
+		toSave = append(toSave, mm)
+		auditNames = append(auditNames, mm.ID)
 	}
-	
-	return m.repository.SaveAll(toSave)
+
+	if err := m.repository.SaveAll(toSave); err != nil {
+		return err
+	}
+	event := audit.NewEvent(auditNames, ipAddress)
+	m.notifier.Notify(event)
+
+	return nil
 }
 
+// GetMetric looks up a single metric by id and type. Returns
+// errors.ErrNotFound if it doesn't exist.
 func (m *MetricsService) GetMetric(id, mType string) (*models.Metrics, error) {
 	return m.repository.Get(id, mType)
 }
 
+// GetMetrics returns every stored metric.
 func (m *MetricsService) GetMetrics() ([]*models.Metrics, error) {
 	return m.repository.GetAll()
 }
 
+// Ping checks that the backing repository is reachable.
 func (m *MetricsService) Ping(ctx context.Context) error {
 	return m.repository.Ping(ctx)
 }

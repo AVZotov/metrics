@@ -6,16 +6,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
+	"github.com/AVZotov/metrics/internal/audit"
+	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
+
+func newTestNotifier() *audit.Notifier {
+	return audit.NewNotifier(&config.AuditConfig{}, zap.NewNop())
+}
 
 type mockRepo struct {
 	saveFn    func(*models.Metrics) error
 	saveAllFn func([]*models.Metrics) error
 	getFn     func(string, string) (*models.Metrics, error)
-	getAllFn   func() ([]*models.Metrics, error)
+	getAllFn  func() ([]*models.Metrics, error)
 }
 
 func (r *mockRepo) Save(m *models.Metrics) error {
@@ -36,7 +43,7 @@ func (r *mockRepo) Ping(_ context.Context) error              { return nil }
 
 func TestNewMetricsService(t *testing.T) {
 	repo := &mockRepo{}
-	svc := NewMetricsService(repo)
+	svc := NewMetricsService(repo, newTestNotifier())
 	require.NotNil(t, svc)
 	assert.Equal(t, repo, svc.repository)
 }
@@ -128,7 +135,7 @@ func TestMetricsService_UpdateMetric(t *testing.T) {
 			wantErr:    errors.ErrNilValue,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -142,7 +149,7 @@ func TestMetricsService_UpdateMetric(t *testing.T) {
 						return nil
 					},
 				}
-				err := NewMetricsService(repo).UpdateMetric(tt.metricType, tt.metricName, tt.value)
+				err := NewMetricsService(repo, newTestNotifier()).UpdateMetric(tt.metricType, tt.metricName, tt.value, "")
 				if tt.wantErr != nil {
 					assert.ErrorIs(t, err, tt.wantErr)
 				} else {
@@ -160,11 +167,11 @@ func TestMetricsService_UpdateMetrics(t *testing.T) {
 	d := int64(5)
 	v := 3.14
 	tests := []struct {
-		name        string
-		metrics     []models.Metrics
-		saveAllFn   func([]*models.Metrics) error
-		wantErr     error
-		checkSaved  func(t *testing.T, saved []*models.Metrics)
+		name       string
+		metrics    []models.Metrics
+		saveAllFn  func([]*models.Metrics) error
+		wantErr    error
+		checkSaved func(t *testing.T, saved []*models.Metrics)
 	}{
 		{
 			name:    "empty id returns ErrEmptyMetricName",
@@ -197,10 +204,10 @@ func TestMetricsService_UpdateMetrics(t *testing.T) {
 			},
 		},
 		{
-			name:    "repository error is propagated",
-			metrics: []models.Metrics{{ID: "hits", MType: models.Counter, Delta: &d}},
+			name:      "repository error is propagated",
+			metrics:   []models.Metrics{{ID: "hits", MType: models.Counter, Delta: &d}},
 			saveAllFn: func(_ []*models.Metrics) error { return errors.ErrNilDelta },
-			wantErr: errors.ErrNilDelta,
+			wantErr:   errors.ErrNilDelta,
 		},
 	}
 
@@ -217,7 +224,7 @@ func TestMetricsService_UpdateMetrics(t *testing.T) {
 						return nil
 					},
 				}
-				err := NewMetricsService(repo).UpdateMetrics(tt.metrics)
+				err := NewMetricsService(repo, newTestNotifier()).UpdateMetrics(tt.metrics, "")
 				if tt.wantErr != nil {
 					assert.ErrorIs(t, err, tt.wantErr)
 				} else {
@@ -242,12 +249,12 @@ func TestMetricsService_GetMetric(t *testing.T) {
 					return want, nil
 				},
 			}
-			got, err := NewMetricsService(repo).GetMetric("cpu", models.Gauge)
+			got, err := NewMetricsService(repo, newTestNotifier()).GetMetric("cpu", models.Gauge)
 			require.NoError(t, err)
 			assert.Equal(t, want, got)
 		},
 	)
-	
+
 	t.Run(
 		"repository error", func(t *testing.T) {
 			repo := &mockRepo{
@@ -255,7 +262,7 @@ func TestMetricsService_GetMetric(t *testing.T) {
 					return nil, errors.ErrNotFound
 				},
 			}
-			got, err := NewMetricsService(repo).GetMetric("missing", models.Counter)
+			got, err := NewMetricsService(repo, newTestNotifier()).GetMetric("missing", models.Counter)
 			assert.ErrorIs(t, err, errors.ErrNotFound)
 			assert.Nil(t, got)
 		},
@@ -272,18 +279,18 @@ func TestMetricsService_GetMetrics(t *testing.T) {
 			repo := &mockRepo{
 				getAllFn: func() ([]*models.Metrics, error) { return want, nil },
 			}
-			got, err := NewMetricsService(repo).GetMetrics()
+			got, err := NewMetricsService(repo, newTestNotifier()).GetMetrics()
 			require.NoError(t, err)
 			assert.Equal(t, want, got)
 		},
 	)
-	
+
 	t.Run(
 		"repository error", func(t *testing.T) {
 			repo := &mockRepo{
 				getAllFn: func() ([]*models.Metrics, error) { return nil, errors.ErrNotFound },
 			}
-			got, err := NewMetricsService(repo).GetMetrics()
+			got, err := NewMetricsService(repo, newTestNotifier()).GetMetrics()
 			assert.ErrorIs(t, err, errors.ErrNotFound)
 			assert.Nil(t, got)
 		},
@@ -302,7 +309,7 @@ func Test_parseInt(t *testing.T) {
 		{"string", "abc", 0, true},
 		{"float string", "3.14", 0, true},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -330,7 +337,7 @@ func Test_parseFloat(t *testing.T) {
 		{"negative float", "-1.5", -1.5, false},
 		{"string", "abc", 0, true},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {

@@ -25,7 +25,6 @@ vendor/
 .vscode
 
 # Internal documents
-Docs/
 data/
 .task/
 .claude/

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AVZotov/metrics/internal/sign"
@@ -36,6 +37,12 @@ type responseCompressedWriter struct {
 	enabled bool
 }
 
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
 func (w *responseCompressedWriter) checkContentType() {
 	if w.checked {
 		return
@@ -43,7 +50,8 @@ func (w *responseCompressedWriter) checkContentType() {
 	w.checked = true
 	ct := w.Header().Get("Content-Type")
 	if strings.Contains(ct, "application/json") || strings.Contains(ct, "text/html") {
-		w.gw = gzip.NewWriter(w.ResponseWriter)
+		w.gw = gzipWriterPool.Get().(*gzip.Writer)
+		w.gw.Reset(w.ResponseWriter)
 		w.Header().Set("Content-Encoding", "gzip")
 		w.enabled = true
 	}
@@ -83,7 +91,7 @@ func finalizeSignedResponse(w http.ResponseWriter, sw *signResponseWriter, key s
 	_, _ = w.Write(sw.buf.Bytes())
 }
 
-func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
+func loggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +111,7 @@ func LoggingMiddleware(l *zap.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func ContentTypeMiddleware(contentType string) func(handler http.Handler) http.Handler {
+func contentTypeMiddleware(contentType string) func(handler http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +125,7 @@ func ContentTypeMiddleware(contentType string) func(handler http.Handler) http.H
 	}
 }
 
-func CompressMiddleware() func(http.Handler) http.Handler {
+func compressMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +145,9 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 					defer func() {
 						if cw.gw != nil {
 							cw.gw.Close()
+							//Дополнительный сброс для того что бы отвязать от хранящего данные w.ResponceWriter
+							cw.gw.Reset(io.Discard)
+							gzipWriterPool.Put(cw.gw)
 						}
 					}()
 					next.ServeHTTP(cw, r)
@@ -148,7 +159,7 @@ func CompressMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
-func SignMiddleware(key string) func(http.Handler) http.Handler {
+func signMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AVZotov/metrics/internal/audit"
+	"github.com/AVZotov/metrics/internal/config"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -28,14 +30,14 @@ type mockService struct {
 	getAllFn        func() ([]*models.Metrics, error)
 }
 
-func (m *mockService) UpdateMetric(mType, name, value string) error {
+func (m *mockService) UpdateMetric(mType, name, value, _ string) error {
 	if m.updateFn != nil {
 		return m.updateFn(mType, name, value)
 	}
 	return nil
 }
 
-func (m *mockService) UpdateMetrics(metrics []models.Metrics) error {
+func (m *mockService) UpdateMetrics(metrics []models.Metrics, _ string) error {
 	if m.updateMetricsFn != nil {
 		return m.updateMetricsFn(metrics)
 	}
@@ -63,7 +65,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger, "")
+	return NewRouter(h, logger, "", false)
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -71,10 +73,35 @@ func setupRouter(t *testing.T) chi.Router {
 	file, err := repository.NewFileStore("metrics.json", t.TempDir())
 	require.NoError(t, err)
 	store := repository.NewStore(repository.NewMemStore(), file, false)
-	s := service.NewMetricsService(store)
+	notifier := audit.NewNotifier(&config.AuditConfig{}, zap.NewNop())
+	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger, "")
+	return NewRouter(h, logger, "", false)
+}
+
+func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	h := New(&mockService{}, logger)
+	router := NewRouter(h, logger, "", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestNewRouter_PprofEnabled(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	h := New(&mockService{}, logger)
+	router := NewRouter(h, logger, "", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestHandler_update_Counter(t *testing.T) {
@@ -525,7 +552,7 @@ func TestContentTypeMiddleware(t *testing.T) {
 			wantStatus:  http.StatusUnsupportedMediaType,
 		},
 	}
-	mw := ContentTypeMiddleware("application/json")(next)
+	mw := contentTypeMiddleware("application/json")(next)
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -664,7 +691,7 @@ func TestLoggingMiddleware(t *testing.T) {
 		},
 	)
 	logger, _ := zap.NewDevelopment()
-	mw := LoggingMiddleware(logger)(next)
+	mw := loggingMiddleware(logger)(next)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
@@ -678,7 +705,7 @@ func TestCompressMiddleware_Passthrough(t *testing.T) {
 			_, _ = w.Write([]byte("pong"))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
@@ -693,7 +720,7 @@ func TestCompressMiddleware_InvalidGzipBody(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not gzip at all"))
 	req.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -716,7 +743,7 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -733,7 +760,7 @@ func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -755,7 +782,7 @@ func TestCompressMiddleware_NoGzipForPlainText(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -772,7 +799,7 @@ func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -795,7 +822,7 @@ func TestCompressMiddleware_MultiWrite(t *testing.T) {
 			_, _ = w.Write([]byte("pong"))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -917,7 +944,7 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 			_, _ = w.Write([]byte(respBody))
 		},
 	)
-	mw := CompressMiddleware()(next)
+	mw := compressMiddleware()(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")

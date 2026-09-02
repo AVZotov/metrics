@@ -9,6 +9,8 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+// AgentConfig holds the agent's runtime configuration, populated from
+// flags and environment variables (env vars take precedence).
 type AgentConfig struct {
 	Address        `env:"ADDRESS"`
 	PollInterval   uint   `env:"POLL_INTERVAL"`
@@ -17,6 +19,9 @@ type AgentConfig struct {
 	Key            string `env:"KEY"`
 }
 
+// NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
+// Returns an error if flag parsing fails or poll interval, report interval,
+// or rate limit end up zero.
 func NewAgentConfig() (*AgentConfig, error) {
 	conf := new(AgentConfig)
 	setAgentDefaults(conf)
@@ -33,25 +38,25 @@ func NewAgentConfig() (*AgentConfig, error) {
 }
 
 func setAgentDefaults(cfg *AgentConfig) {
-	cfg.Host = Host
-	cfg.Port = Port
-	cfg.PollInterval = PollInterval
-	cfg.ReportInterval = ReportInterval
-	cfg.RateLimit = RateLimit
+	cfg.Host = host
+	cfg.Port = port
+	cfg.PollInterval = pollInterval
+	cfg.ReportInterval = reportInterval
+	cfg.RateLimit = rateLimit
 }
 
 func parseAgentFlags(cfg *AgentConfig) error {
 	flag.Var(&cfg.Address, "a", "address in form host:port")
-	pollInterval := flag.Uint("p", PollInterval, "poll interval in seconds")
-	reportInterval := flag.Uint("r", ReportInterval, "report interval in seconds")
-	rateLimit := flag.Uint("l", RateLimit, "max number of concurrent outgoing report requests")
+	pollIntervalFlag := flag.Uint("p", pollInterval, "poll interval in seconds")
+	reportIntervalFlag := flag.Uint("r", reportInterval, "report interval in seconds")
+	rateLimitFlag := flag.Uint("l", rateLimit, "max number of concurrent outgoing report requests")
 	key := flag.String("k", "", "signing key")
 
 	flag.Parse()
 
-	cfg.PollInterval = *pollInterval
-	cfg.ReportInterval = *reportInterval
-	cfg.RateLimit = *rateLimit
+	cfg.PollInterval = *pollIntervalFlag
+	cfg.ReportInterval = *reportIntervalFlag
+	cfg.RateLimit = *rateLimitFlag
 	cfg.Key = *key
 
 	if flag.NArg() > 0 {

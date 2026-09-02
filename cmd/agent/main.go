@@ -1,3 +1,5 @@
+// Command agent polls runtime and system metrics on an interval and reports
+// them to the metrics server, with retry on recoverable send failures.
 package main
 
 import (

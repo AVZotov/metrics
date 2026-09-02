@@ -1,3 +1,5 @@
+// Command server runs the HTTP API that receives metrics from agents,
+// persists them (in memory, to a file, or to Postgres), and serves them back.
 package main
 
 import (
@@ -12,12 +14,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
 	"go.uber.org/zap"
 )
+
+const auditShutdownTimeout = 1 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -52,9 +57,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	s := service.NewMetricsService(repo)
+	auditNotifier := audit.NewNotifier(&cfg.Audit, logger)
+	s := service.NewMetricsService(repo, auditNotifier)
 	h := handler.New(s, logger)
-	mux := handler.NewRouter(h, logger, cfg.Key)
+	mux := handler.NewRouter(h, logger, cfg.Key, cfg.EnablePprof)
 	server := &http.Server{
 		Addr:    cfg.String(),
 		Handler: mux,
@@ -77,13 +83,20 @@ func run() error {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-	cancel()
 	wg.Wait()
 	if err := repo.Dump(); err != nil {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
 	if err := repo.Close(); err != nil {
+		logger.Error(err.Error())
+		shutdownErr = errors.Join(shutdownErr, err)
+	}
+
+	auditCtx, auditCancel := context.WithTimeout(context.Background(), auditShutdownTimeout)
+	defer auditCancel()
+
+	if err := auditNotifier.Shutdown(auditCtx); err != nil {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}

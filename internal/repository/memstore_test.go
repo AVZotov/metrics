@@ -3,10 +3,10 @@ package repository
 import (
 	"sync"
 	"testing"
-	
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	
+
 	"github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -99,7 +99,7 @@ func TestMemStorage_Save(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestMemStorage_Get(t *testing.T) {
 	s := NewMemStore()
 	s.counter["reqs"] = models.Metrics{ID: "reqs", MType: models.Counter, Delta: new(int64(42))}
 	s.gauge["cpu"] = models.Metrics{ID: "cpu", MType: models.Gauge, Value: new(3.14)}
-	
+
 	tests := []struct {
 		name    string
 		id      string
@@ -163,7 +163,7 @@ func TestMemStorage_Get(t *testing.T) {
 			wantErr: errors.ErrUnknownMetricType,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -190,18 +190,18 @@ func TestMemStorage_GetAll(t *testing.T) {
 			assert.Empty(t, result)
 		},
 	)
-	
+
 	t.Run(
 		"returns all gauges and counters", func(t *testing.T) {
 			s := NewMemStore()
 			s.gauge["g1"] = models.Metrics{ID: "g1", MType: models.Gauge, Value: new(1.0)}
 			s.gauge["g2"] = models.Metrics{ID: "g2", MType: models.Gauge, Value: new(2.0)}
 			s.counter["c1"] = models.Metrics{ID: "c1", MType: models.Counter, Delta: new(int64(10))}
-			
+
 			result, err := s.GetAll()
 			require.NoError(t, err)
 			assert.Len(t, result, 3)
-			
+
 			ids := make([]string, 0, len(result))
 			for _, m := range result {
 				ids = append(ids, m.ID)
@@ -246,6 +246,28 @@ func TestMemStorage_SaveAll(t *testing.T) {
 	)
 
 	t.Run(
+		"does not mutate caller's Delta pointer when accumulating against existing counter", func(t *testing.T) {
+			s := NewMemStore()
+			existing := int64(5)
+			require.NoError(t, s.Save(&models.Metrics{ID: "hits", MType: models.Counter, Delta: &existing}))
+
+			callerDelta := int64(3)
+			callerOwned := []models.Metrics{
+				{ID: "hits", MType: models.Counter, Delta: &callerDelta},
+			}
+			toSave := []*models.Metrics{&callerOwned[0]}
+
+			require.NoError(t, s.SaveAll(toSave))
+
+			assert.Equal(t, int64(3), callerDelta, "caller's original Delta must be unchanged after SaveAll")
+
+			got, err := s.Get("hits", models.Counter)
+			require.NoError(t, err)
+			assert.Equal(t, int64(8), *got.Delta, "store must still hold the accumulated total")
+		},
+	)
+
+	t.Run(
 		"stops on first error", func(t *testing.T) {
 			s := NewMemStore()
 			metrics := []*models.Metrics{
@@ -267,7 +289,7 @@ func TestMemStorage_SaveAll(t *testing.T) {
 func TestMemStorage_ConcurrentSave(t *testing.T) {
 	s := NewMemStore()
 	const requests int64 = 1000
-	
+
 	tests := []struct {
 		name string
 		want int64
@@ -277,7 +299,7 @@ func TestMemStorage_ConcurrentSave(t *testing.T) {
 			want: requests,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		var wg sync.WaitGroup
 		t.Run(

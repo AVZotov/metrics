@@ -1,15 +1,15 @@
+// Package models defines the Metrics data model shared across the agent,
+// server, repository, and service layers.
 package models
 
 const (
+	// Counter identifies a metric that accumulates (delta values only).
 	Counter = "counter"
-	Gauge   = "gauge"
+	// Gauge identifies a metric that holds a single point-in-time value.
+	Gauge = "gauge"
 )
 
-// Metrics NOTE: Не усложняем пример, вводя иерархическую вложенность структур.
-// Органичиваясь плоской моделью.
-// Delta и Value объявлены через указатели,
-// что бы отличать значение "0", от не заданного значения
-// и соответственно не кодировать в структуру.
+// Metrics represents a single metric, either a counter or a gauge.
 type Metrics struct {
 	ID    string   `json:"id"`
 	MType string   `json:"type"`
