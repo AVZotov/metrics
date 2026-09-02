@@ -60,7 +60,7 @@ func run() error {
 	auditNotifier := audit.NewNotifier(&cfg.Audit, logger)
 	s := service.NewMetricsService(repo, auditNotifier)
 	h := handler.New(s, logger)
-	mux := handler.NewRouter(h, logger, cfg.Key)
+	mux := handler.NewRouter(h, logger, cfg.Key, cfg.EnablePprof)
 	server := &http.Server{
 		Addr:    cfg.String(),
 		Handler: mux,

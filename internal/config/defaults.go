@@ -11,6 +11,7 @@ const (
 	storeInterval             = 300
 	fileStoragePath           = "data/metrics.json"
 	restore                   = true
+	enablePprof               = false
 	serverShutdownGracePeriod = 1
 	dbConnectTimeout          = 2 * time.Second
 	dbQueryTimeout            = 2 * time.Second

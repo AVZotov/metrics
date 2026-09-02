@@ -65,7 +65,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger, "")
+	return NewRouter(h, logger, "", false)
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -77,7 +77,31 @@ func setupRouter(t *testing.T) chi.Router {
 	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger, "")
+	return NewRouter(h, logger, "", false)
+}
+
+func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	h := New(&mockService{}, logger)
+	router := NewRouter(h, logger, "", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestNewRouter_PprofEnabled(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	h := New(&mockService{}, logger)
+	router := NewRouter(h, logger, "", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestHandler_update_Counter(t *testing.T) {

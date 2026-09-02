@@ -26,6 +26,7 @@ type ServerConfig struct {
 	StoreInterval       int    `env:"STORE_INTERVAL"`
 	Restore             bool   `env:"RESTORE"`
 	FileStoragePath     string `env:"FILE_STORAGE_PATH"`
+	EnablePprof         bool   `env:"ENABLE_PPROF"`
 	ShutdownGracePeriod uint
 	DSN                 string `env:"DATABASE_DSN"`
 	DSNSet              bool
@@ -67,6 +68,7 @@ func setServerDefaults(s *ServerConfig) {
 	s.StoreInterval = storeInterval
 	s.Restore = restore
 	s.FileStoragePath = fileStoragePath
+	s.EnablePprof = enablePprof
 	s.ShutdownGracePeriod = serverShutdownGracePeriod
 	s.DB = dbcfg.Config{ConnectTimeout: dbConnectTimeout, QueryTimeout: dbQueryTimeout}
 }
@@ -76,6 +78,7 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.IntVar(&config.StoreInterval, "i", storeInterval, "metrics save interval in seconds")
 	flag.BoolVar(&config.Restore, "r", restore, "restore store on server restart")
 	flag.StringVar(&config.FileStoragePath, "f", fileStoragePath, "store path")
+	flag.BoolVar(&config.EnablePprof, "enable-pprof", enablePprof, "mount /debug/pprof profiler endpoints")
 	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
 	flag.StringVar(&config.Key, "k", "", "signing key")
 	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")

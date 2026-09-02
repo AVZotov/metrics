@@ -24,7 +24,7 @@ func newExampleServer() *httptest.Server {
 	notifier := audit.NewNotifier(&config.AuditConfig{}, zap.NewNop())
 	s := service.NewMetricsService(store, notifier)
 	h := New(s, zap.NewNop())
-	return httptest.NewServer(NewRouter(h, zap.NewNop(), ""))
+	return httptest.NewServer(NewRouter(h, zap.NewNop(), "", false))
 }
 
 // ExampleNewRouter demonstrates saving a gauge metric via
