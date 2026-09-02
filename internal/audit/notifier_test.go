@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -89,10 +90,7 @@ func TestNewNotifier_FileAndURL(t *testing.T) {
 func TestNotifier_Notify_CallsAllObservers(t *testing.T) {
 	obs1 := &fakeObserver{name: "obs1"}
 	obs2 := &fakeObserver{name: "obs2"}
-	n := &Notifier{
-		observers: []Observer{obs1, obs2},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{obs1, obs2}, zap.NewNop())
 
 	event := NewEvent([]string{"cpu"}, "1.1.1.1")
 	n.Notify(event)
@@ -107,10 +105,7 @@ func TestNotifier_Notify_CallsAllObservers(t *testing.T) {
 func TestNotifier_Notify_ContinuesAfterObserverError(t *testing.T) {
 	failing := &fakeObserver{name: "failing", err: assert.AnError}
 	ok := &fakeObserver{name: "ok"}
-	n := &Notifier{
-		observers: []Observer{failing, ok},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{failing, ok}, zap.NewNop())
 
 	event := NewEvent([]string{"cpu"}, "1.1.1.1")
 	n.Notify(event)
@@ -123,21 +118,50 @@ func TestNotifier_Notify_ContinuesAfterObserverError(t *testing.T) {
 func TestNotifier_Notify_IsNonBlocking(t *testing.T) {
 	obs1 := &fakeSlowCloserObserver{name: "obs1", delay: 100 * time.Millisecond}
 	obs2 := &fakeSlowCloserObserver{name: "obs2", delay: 100 * time.Millisecond}
-	n := &Notifier{
-		observers: []Observer{obs1, obs2},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{obs1, obs2}, zap.NewNop())
 
 	start := time.Now()
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 	elapsed := time.Since(start)
 
-	assert.Less(t, elapsed, 150*time.Millisecond)
+	// Notify only enqueues onto the channel now, so it should return almost
+	// immediately regardless of how slow the observers are to dispatch.
+	assert.Less(t, elapsed, 20*time.Millisecond)
 
 	require.NoError(t, n.Shutdown(context.Background()))
 	assert.Equal(t, int32(1), obs1.calls.Load())
 	assert.Equal(t, int32(1), obs2.calls.Load())
 }
+
+func TestNotifier_Notify_QueueFull_DropsEvent(t *testing.T) {
+	block := make(chan struct{})
+	obs := &blockingObserver{block: block}
+	n := newNotifier([]Observer{obs}, zap.NewNop())
+
+	// The first event is picked up by the worker immediately and blocks it
+	// on obs.Notify, so every event after that piles up in the channel.
+	for i := 0; i < eventBufferSize+10; i++ {
+		assert.NotPanics(t, func() {
+			n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
+		})
+	}
+
+	close(block)
+	require.NoError(t, n.Shutdown(context.Background()))
+}
+
+// blockingObserver blocks in Notify until block is closed, used to force
+// the worker to stall so the event channel fills up.
+type blockingObserver struct {
+	block chan struct{}
+}
+
+func (b *blockingObserver) Notify(_ Event) error {
+	<-b.block
+	return nil
+}
+
+func (b *blockingObserver) Name() string { return "blocking" }
 
 func TestNotifier_Notify_NilReceiver_DoesNotPanic(t *testing.T) {
 	var n *Notifier
@@ -148,10 +172,7 @@ func TestNotifier_Notify_NilReceiver_DoesNotPanic(t *testing.T) {
 
 func TestNotifier_Shutdown_WaitsForInFlightNotify(t *testing.T) {
 	obs := &fakeSlowCloserObserver{name: "obs", delay: 50 * time.Millisecond}
-	n := &Notifier{
-		observers: []Observer{obs},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{obs}, zap.NewNop())
 
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 	require.NoError(t, n.Shutdown(context.Background()))
@@ -161,10 +182,7 @@ func TestNotifier_Shutdown_WaitsForInFlightNotify(t *testing.T) {
 
 func TestNotifier_Shutdown_TimesOutAndSkipsClose(t *testing.T) {
 	obs := &fakeSlowCloserObserver{name: "obs", delay: 200 * time.Millisecond}
-	n := &Notifier{
-		observers: []Observer{obs},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{obs}, zap.NewNop())
 
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 
@@ -180,10 +198,7 @@ func TestNotifier_Shutdown_TimesOutAndSkipsClose(t *testing.T) {
 func TestNotifier_Shutdown_ClosesAllObservers(t *testing.T) {
 	obs1 := &fakeSlowCloserObserver{name: "obs1"}
 	obs2 := &fakeSlowCloserObserver{name: "obs2"}
-	n := &Notifier{
-		observers: []Observer{obs1, obs2},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{obs1, obs2}, zap.NewNop())
 
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 	require.NoError(t, n.Shutdown(context.Background()))
@@ -195,10 +210,7 @@ func TestNotifier_Shutdown_ClosesAllObservers(t *testing.T) {
 func TestNotifier_Shutdown_ContinuesClosingAfterCloseError(t *testing.T) {
 	failing := &fakeSlowCloserObserver{name: "failing", closeErr: assert.AnError}
 	ok := &fakeSlowCloserObserver{name: "ok"}
-	n := &Notifier{
-		observers: []Observer{failing, ok},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{failing, ok}, zap.NewNop())
 
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 	err := n.Shutdown(context.Background())
@@ -211,10 +223,7 @@ func TestNotifier_Shutdown_ContinuesClosingAfterCloseError(t *testing.T) {
 
 func TestNotifier_Shutdown_SkipsObserversWithoutClose(t *testing.T) {
 	nonCloser := &fakeObserver{name: "non-closer"}
-	n := &Notifier{
-		observers: []Observer{nonCloser},
-		logger:    zap.NewNop(),
-	}
+	n := newNotifier([]Observer{nonCloser}, zap.NewNop())
 
 	n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
 
@@ -223,4 +232,29 @@ func TestNotifier_Shutdown_SkipsObserversWithoutClose(t *testing.T) {
 		err = n.Shutdown(context.Background())
 	})
 	assert.NoError(t, err)
+}
+
+func TestNotifier_Notify_ConcurrentWithShutdown_NoRace(t *testing.T) {
+	obs := &fakeObserver{name: "obs"}
+	n := newNotifier([]Observer{obs}, zap.NewNop())
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
+		}
+	}()
+
+	assert.NotPanics(t, func() {
+		require.NoError(t, n.Shutdown(context.Background()))
+	})
+
+	wg.Wait()
+
+	// Notify calls after Shutdown has returned must still be safe no-ops.
+	assert.NotPanics(t, func() {
+		n.Notify(NewEvent([]string{"cpu"}, "1.1.1.1"))
+	})
 }
