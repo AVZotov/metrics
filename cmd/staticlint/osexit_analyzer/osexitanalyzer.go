@@ -2,7 +2,8 @@ package osexitanalyzer
 
 import (
 	"go/ast"
-	
+	"strings"
+
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -16,6 +17,11 @@ func run(pass *analysis.Pass) (any, error) {
 	if pass.Pkg.Name() != "main" {
 		return nil, nil
 	}
+
+	if strings.HasSuffix(pass.Pkg.Path(), ".test") {
+		return nil, nil
+	}
+
 	for _, file := range pass.Files {
 		for _, decl := range file.Decls {
 			if funcDecl, ok := decl.(*ast.FuncDecl); ok {
@@ -32,7 +38,7 @@ func run(pass *analysis.Pass) (any, error) {
 									"direct call to os.Exit is not allowed in main function of package main",
 								)
 							}
-							
+
 							return true
 						},
 					)
@@ -40,7 +46,7 @@ func run(pass *analysis.Pass) (any, error) {
 			}
 		}
 	}
-	
+
 	return nil, nil
 }
 
@@ -49,11 +55,11 @@ func isOsExitCall(call *ast.CallExpr) bool {
 	if !ok {
 		return false
 	}
-	
+
 	ident, ok := sel.X.(*ast.Ident)
 	if !ok || ident.Name != "os" {
 		return false
 	}
-	
+
 	return sel.Sel.Name == "Exit"
 }
