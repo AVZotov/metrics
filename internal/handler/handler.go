@@ -114,7 +114,7 @@ func (h *Handler) getAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dtos := dto.GetMetricsDTOs(m)
-	err = templates.MetricsPage(dtos).Render(r.Context(), w)
+	err = templates.MetricsPage(w, dtos)
 	if err != nil {
 		h.logger.Error("failed to render template", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
