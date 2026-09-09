@@ -22,8 +22,12 @@ func register(mux *chi.Mux, h *Handler, key string, enablePprof bool) {
 	if enablePprof {
 		mux.Mount("/debug", middleware.Profiler())
 	}
-	mux.Get("/", h.getAll)
 	mux.Get("/ping", h.ping)
+
+	mux.Group(func(mux chi.Router) {
+		mux.Use(compressMiddleware())
+		mux.Get("/", h.getAll)
+	})
 
 	mux.Group(func(mux chi.Router) {
 		mux.Use(signMiddleware(key))
