@@ -44,8 +44,8 @@ func run() error {
 		return err
 	}
 	defer func() {
-		if err := logger.Sync(); err != nil {
-			logger.Error(err.Error())
+		if syncErr := logger.Sync(); syncErr != nil {
+			logger.Error(syncErr.Error())
 		}
 	}()
 	mStore := repository.NewMemStore()

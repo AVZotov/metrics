@@ -42,7 +42,7 @@ func (h *httpObserver) Notify(event Event) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("audit server returned status %d", resp.StatusCode)

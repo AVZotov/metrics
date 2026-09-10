@@ -1,3 +1,9 @@
+// Package osexitanalyzer implements a custom analyzer that flags direct
+// os.Exit calls inside the main function of package main. It skips main()
+// in non-main packages, skips methods (a func named "main" with a
+// receiver), and skips synthesized "<pkg>.test" packages so it doesn't
+// trip on the test binary's generated entry point. See the Analyzer var's
+// doc comment for the same rule in godoc form.
 package osexitanalyzer
 
 import (
@@ -7,6 +13,9 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+// Analyzer reports direct calls to os.Exit inside the main function of
+// package main, skipping main() in non-main packages, methods named
+// "main", and synthesized "<pkg>.test" packages.
 var Analyzer = &analysis.Analyzer{
 	Name: "os_exit_check",
 	Doc:  "os exit analyzer\n\ncheck os.exit call in main func of main package",

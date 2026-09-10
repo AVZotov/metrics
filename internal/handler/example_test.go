@@ -38,7 +38,7 @@ func ExampleNewRouter() {
 		fmt.Println(err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Println(resp.StatusCode)
@@ -63,7 +63,7 @@ func ExampleNewRouter_updateJSON() {
 		fmt.Println(err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	fmt.Println(resp.StatusCode)
@@ -84,14 +84,14 @@ func ExampleNewRouter_getValue() {
 		fmt.Println(err)
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	resp, err = http.Get(ts.URL + "/value/gauge/HeapAlloc")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Println(string(body))

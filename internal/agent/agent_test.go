@@ -137,7 +137,7 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				defer gz.Close()
+				defer func() { _ = gz.Close() }()
 				var batch []models.Metrics
 				if err := json.NewDecoder(gz).Decode(&batch); err != nil {
 					w.WriteHeader(http.StatusBadRequest)

@@ -125,7 +125,7 @@ func contentTypeMiddleware(contentType string) func(handler http.Handler) http.H
 	}
 }
 
-func compressMiddleware() func(http.Handler) http.Handler {
+func compressMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
@@ -137,14 +137,16 @@ func compressMiddleware() func(http.Handler) http.Handler {
 						w.WriteHeader(http.StatusBadRequest)
 						return
 					}
-					defer gr.Close()
+					defer func() { _ = gr.Close() }()
 					r.Body = gr
 				}
 				if strings.Contains(aEnc, "gzip") {
 					cw := &responseCompressedWriter{ResponseWriter: w}
 					defer func() {
 						if cw.gw != nil {
-							cw.gw.Close()
+							if err := cw.gw.Close(); err != nil {
+								logger.Warn("gzip writer close failed", zap.Error(err))
+							}
 							//Дополнительный сброс для того что бы отвязать от хранящего данные w.ResponceWriter
 							cw.gw.Reset(io.Discard)
 							gzipWriterPool.Put(cw.gw)

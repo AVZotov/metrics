@@ -124,7 +124,7 @@ func (h *Handler) getAll(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 	m := new(models.Metrics)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	if err := json.NewDecoder(r.Body).Decode(m); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		h.logger.Error("failed to decode json", zap.Error(err))
@@ -169,7 +169,7 @@ func (h *Handler) updateJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) valueJSON(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	m := new(models.Metrics)
 	if err := json.NewDecoder(r.Body).Decode(m); err != nil {
 		h.logger.Error("failed to decode json", zap.Error(err))
@@ -216,7 +216,7 @@ func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updatesJSON(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	var m []models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 		h.logger.Error("failed to decode json", zap.Error(err))

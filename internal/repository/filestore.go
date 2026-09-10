@@ -35,7 +35,7 @@ func NewFileStore(name, path string) (*FileStore, error) {
 // Save updates m in place if a matching id/type already exists in the
 // file, otherwise appends it, then rewrites the whole file. Returns an
 // error if reading or writing the file fails.
-func (d *FileStore) Save(m *models.Metrics) error {
+func (d *FileStore) Save(m *models.Metrics) (err error) {
 	metrics, err := d.GetAll()
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -67,7 +67,11 @@ func (d *FileStore) Save(m *models.Metrics) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	_, err = file.Write(data)
 	return err
 }
@@ -103,7 +107,9 @@ func (d *FileStore) GetAll() ([]*models.Metrics, error) {
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	if err = json.NewDecoder(file).Decode(&metrics); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -116,7 +122,7 @@ func (d *FileStore) GetAll() ([]*models.Metrics, error) {
 
 // SaveAll overwrites the file with the given metrics. Returns an error if
 // marshaling or writing the file fails.
-func (d *FileStore) SaveAll(metrics []*models.Metrics) error {
+func (d *FileStore) SaveAll(metrics []*models.Metrics) (err error) {
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return err
@@ -126,7 +132,11 @@ func (d *FileStore) SaveAll(metrics []*models.Metrics) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	_, err = file.Write(data)
 	return err
 }

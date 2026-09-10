@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io/fs"
 
 	"github.com/pressly/goose/v3"
@@ -14,12 +15,16 @@ import (
 
 // RunMigrations applies all embedded goose migrations against dsn. Returns
 // an error if the connection fails or any migration fails to apply.
-func RunMigrations(ctx context.Context, dsn string) error {
+func RunMigrations(ctx context.Context, dsn string) (err error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	migrationsFS, err := fs.Sub(metrics.EmbedMigrations, "migrations")
 	if err != nil {
@@ -30,7 +35,11 @@ func RunMigrations(ctx context.Context, dsn string) error {
 	if err != nil {
 		return err
 	}
-	defer provider.Close()
+	defer func() {
+		if closeErr := provider.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if _, err := provider.Up(ctx); err != nil {
 		return err

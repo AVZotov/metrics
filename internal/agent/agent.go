@@ -148,7 +148,7 @@ func (a *Agent) sendMetric(metricType, name, value string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return nil
 }
 
@@ -192,7 +192,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	if err != nil {
 		return &apperrors.NetworkError{Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return httpStatusError(resp.StatusCode)
 	}
@@ -226,7 +226,7 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 	if err != nil {
 		return &apperrors.NetworkError{Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return httpStatusError(resp.StatusCode)
 	}

@@ -705,7 +705,7 @@ func TestCompressMiddleware_Passthrough(t *testing.T) {
 			_, _ = w.Write([]byte("pong"))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
@@ -720,7 +720,7 @@ func TestCompressMiddleware_InvalidGzipBody(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not gzip at all"))
 	req.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -733,7 +733,7 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(payload))
-	gz.Close()
+	require.NoError(t, gz.Close())
 
 	var gotBody string
 	next := http.HandlerFunc(
@@ -743,7 +743,7 @@ func TestCompressMiddleware_GzipRequestDecompression(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -760,7 +760,7 @@ func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -768,7 +768,7 @@ func TestCompressMiddleware_GzipResponse_JSON(t *testing.T) {
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, body, string(decompressed))
@@ -782,7 +782,7 @@ func TestCompressMiddleware_NoGzipForPlainText(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -799,7 +799,7 @@ func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -807,7 +807,7 @@ func TestCompressMiddleware_GzipResponse_HTML(t *testing.T) {
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, body, string(decompressed))
@@ -822,14 +822,14 @@ func TestCompressMiddleware_MultiWrite(t *testing.T) {
 			_, _ = w.Write([]byte("pong"))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, expected, string(decompressed))
@@ -934,7 +934,7 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte(reqBody))
-	gz.Close()
+	require.NoError(t, gz.Close())
 
 	next := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -944,7 +944,7 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 			_, _ = w.Write([]byte(respBody))
 		},
 	)
-	mw := compressMiddleware()(next)
+	mw := compressMiddleware(zap.NewNop())(next)
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -954,7 +954,7 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	gr, err := gzip.NewReader(w.Body)
 	require.NoError(t, err)
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, respBody, string(decompressed))
