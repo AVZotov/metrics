@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// generate:reset
 type responseWriter struct {
 	http.ResponseWriter
 	status int
@@ -70,6 +71,7 @@ func (w *responseCompressedWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// generate:reset
 type signResponseWriter struct {
 	http.ResponseWriter
 	buf        bytes.Buffer
