@@ -5,5 +5,7 @@ package metrics
 
 import "embed"
 
+// EmbedMigrations holds the goose SQL migration files embedded into the binary.
+//
 //go:embed migrations/*.sql
 var EmbedMigrations embed.FS

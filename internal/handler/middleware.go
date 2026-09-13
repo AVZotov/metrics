@@ -6,9 +6,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
 	"go.uber.org/zap"
 )
@@ -33,16 +33,26 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 
 type responseCompressedWriter struct {
 	http.ResponseWriter
-	gw      *gzip.Writer
+	gw      *gzipWriter
 	checked bool
 	enabled bool
 }
 
-var gzipWriterPool = sync.Pool{
-	New: func() any {
-		return gzip.NewWriter(io.Discard)
-	},
+// gzipWriter wraps *gzip.Writer so it satisfies pool.Resetter. gzip.Writer's
+// own Reset takes an io.Writer target, which doesn't match the parameterless
+// Reset() the pool needs to recycle an instance, so this adds a Reset() that
+// detaches it back onto io.Discard.
+type gzipWriter struct {
+	*gzip.Writer
 }
+
+func (w *gzipWriter) Reset() {
+	w.Writer.Reset(io.Discard)
+}
+
+var gzipWriterPool = pool.New(func() *gzipWriter {
+	return &gzipWriter{gzip.NewWriter(io.Discard)}
+})
 
 func (w *responseCompressedWriter) checkContentType() {
 	if w.checked {
@@ -51,8 +61,8 @@ func (w *responseCompressedWriter) checkContentType() {
 	w.checked = true
 	ct := w.Header().Get("Content-Type")
 	if strings.Contains(ct, "application/json") || strings.Contains(ct, "text/html") {
-		w.gw = gzipWriterPool.Get().(*gzip.Writer)
-		w.gw.Reset(w.ResponseWriter)
+		w.gw = gzipWriterPool.Get()
+		w.gw.Writer.Reset(w.ResponseWriter)
 		w.Header().Set("Content-Encoding", "gzip")
 		w.enabled = true
 	}
@@ -149,8 +159,8 @@ func compressMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 							if err := cw.gw.Close(); err != nil {
 								logger.Warn("gzip writer close failed", zap.Error(err))
 							}
-							//Дополнительный сброс для того что бы отвязать от хранящего данные w.ResponceWriter
-							cw.gw.Reset(io.Discard)
+							// Put resets cw.gw back onto io.Discard via gzipWriter.Reset,
+							// detaching it from w.ResponseWriter before it returns to the pool.
 							gzipWriterPool.Put(cw.gw)
 						}
 					}()
