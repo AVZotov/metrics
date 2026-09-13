@@ -289,3 +289,22 @@ func isRetriable(err error) bool {
 
 	return errors.Is(err, apperrors.ErrRetriableStatus)
 }
+
+// AckSent subtracts each sent counter's delta from the agent's running
+// total, so a slow-in-flight report doesn't erase increments collected
+// while it was sending. Call it only after a report has been confirmed
+// delivered — skipping it on failure lets the unset deltas roll into the
+// next report automatically.
+func (a *Agent) AckSent(metrics []models.Metrics) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for _, m := range metrics {
+		if m.MType != models.Counter {
+			continue
+		}
+		if m.Delta != nil {
+			a.counter[m.ID] -= *m.Delta
+		}
+	}
+}

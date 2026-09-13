@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/agent"
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
@@ -40,7 +40,7 @@ func main() {
 func run(logger *zap.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	
+
 	cfg, err := config.NewAgentConfig()
 	if err != nil {
 		return err
@@ -48,16 +48,16 @@ func run(logger *zap.Logger) error {
 	client := &http.Client{}
 	baseURL := fmt.Sprintf("http://%s", cfg.String())
 	a := agent.NewAgent(client, baseURL, cfg.Key)
-	
+
 	jobs := make(chan []models.Metrics, cfg.RateLimit)
 	for i := uint(0); i < cfg.RateLimit; i++ {
 		go reportWorker(ctx, jobs, a, logger)
 	}
-	
+
 	go collectLoop(ctx, a, time.Duration(cfg.PollInterval)*time.Second)
 	go gopsutilLoop(ctx, a, logger, time.Duration(cfg.PollInterval)*time.Second)
 	go reportLoop(ctx, a, jobs, time.Duration(cfg.ReportInterval)*time.Second)
-	
+
 	<-ctx.Done()
 	logger.Info("shutting down agent")
 	return nil
@@ -118,9 +118,12 @@ func reportWorker(ctx context.Context, jobs <-chan []models.Metrics, a *agent.Ag
 		case <-ctx.Done():
 			return
 		case metrics := <-jobs:
-			if err := a.SendWithRetry(ctx, metrics); err != nil {
+			err := a.SendWithRetry(ctx, metrics)
+			if err != nil {
 				logReportError(logger, err)
+				continue
 			}
+			a.AckSent(metrics)
 		}
 	}
 }
