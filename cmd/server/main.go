@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
@@ -22,9 +23,14 @@ import (
 	"go.uber.org/zap"
 )
 
+var buildVersion string
+var buildDate string
+var buildCommit string
+
 const auditShutdownTimeout = 1 * time.Second
 
 func main() {
+	printBuildDetails()
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
@@ -34,7 +40,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	wg := sync.WaitGroup{}
-
+	
 	cfg, err := config.NewServerConfig()
 	if err != nil {
 		return err
@@ -70,13 +76,13 @@ func run() error {
 			log.Fatal(err)
 		}
 	}()
-
+	
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(
 		context.Background(), time.Duration(cfg.ShutdownGracePeriod)*time.Second,
 	)
 	defer shutdownCancel()
-
+	
 	logger.Info("shutting down server...")
 	var shutdownErr error
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -92,15 +98,15 @@ func run() error {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-
+	
 	auditCtx, auditCancel := context.WithTimeout(context.Background(), auditShutdownTimeout)
 	defer auditCancel()
-
+	
 	if err := auditNotifier.Shutdown(auditCtx); err != nil {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
 	}
-
+	
 	return shutdownErr
 }
 
@@ -151,6 +157,22 @@ func initRepo(
 			}
 		}()
 	}
-
+	
 	return repo, nil
+}
+
+func printBuildDetails() {
+	const def = "N/A"
+	if buildVersion == "" {
+		buildVersion = def
+	}
+	fmt.Printf("Build Version: %s\n", buildVersion)
+	if buildDate == "" {
+		buildDate = def
+	}
+	fmt.Printf("Build Date: %s\n", buildDate)
+	if buildCommit == "" {
+		buildCommit = def
+	}
+	fmt.Printf("Build Commit: %s\n", buildCommit)
 }
