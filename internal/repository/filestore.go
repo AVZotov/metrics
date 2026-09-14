@@ -7,7 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
+	"sync"
+	
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -16,6 +17,7 @@ var _ PersistRepository = (*FileStore)(nil)
 
 // FileStore is a PersistRepository backed by a single JSON file on disk.
 type FileStore struct {
+	mu   sync.Mutex
 	name string
 	path string
 }
@@ -36,7 +38,9 @@ func NewFileStore(name, path string) (*FileStore, error) {
 // file, otherwise appends it, then rewrites the whole file. Returns an
 // error if reading or writing the file fails.
 func (d *FileStore) Save(m *models.Metrics) (err error) {
-	metrics, err := d.GetAll()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	metrics, err := d.readAll()
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -80,10 +84,12 @@ func (d *FileStore) Save(m *models.Metrics) (err error) {
 // apperrors.ErrUnknownMetricType for an unrecognized mType, or
 // apperrors.ErrNotFound if no matching metric exists.
 func (d *FileStore) Get(id, mType string) (*models.Metrics, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if mType != models.Counter && mType != models.Gauge {
 		return nil, apperrors.ErrUnknownMetricType
 	}
-	metrics, err := d.GetAll()
+	metrics, err := d.readAll()
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +104,12 @@ func (d *FileStore) Get(id, mType string) (*models.Metrics, error) {
 // GetAll reads every metric from the file. Returns an empty slice (no
 // error) if the file doesn't exist yet or is empty.
 func (d *FileStore) GetAll() ([]*models.Metrics, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.readAll()
+}
+
+func (d *FileStore) readAll() ([]*models.Metrics, error) {
 	var metrics []*models.Metrics
 	fullPath := filepath.Join(d.path, d.name)
 	file, err := os.Open(fullPath)
@@ -110,7 +122,7 @@ func (d *FileStore) GetAll() ([]*models.Metrics, error) {
 	defer func() {
 		_ = file.Close()
 	}()
-
+	
 	if err = json.NewDecoder(file).Decode(&metrics); err != nil {
 		if errors.Is(err, io.EOF) {
 			return metrics, nil
@@ -123,6 +135,8 @@ func (d *FileStore) GetAll() ([]*models.Metrics, error) {
 // SaveAll overwrites the file with the given metrics. Returns an error if
 // marshaling or writing the file fails.
 func (d *FileStore) SaveAll(metrics []*models.Metrics) (err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return err
