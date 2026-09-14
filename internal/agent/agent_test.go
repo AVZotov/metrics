@@ -222,6 +222,78 @@ func TestAgent_SendMetric(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAgent_AckSent_SubtractsDelta(t *testing.T) {
+	a := NewAgent(&http.Client{}, "", "")
+	a.counter["PollCount"] = 10
+
+	delta := int64(4)
+	a.AckSent([]models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: &delta}})
+
+	assert.Equal(t, int64(6), a.counter["PollCount"])
+}
+
+func TestAgent_AckSent_SkipsNonCounterMetrics(t *testing.T) {
+	a := NewAgent(&http.Client{}, "", "")
+	a.counter["PollCount"] = 10
+	a.gauge["Alloc"] = 42
+
+	value := 99.0
+	a.AckSent([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
+
+	assert.Equal(t, int64(10), a.counter["PollCount"])
+	assert.Equal(t, 42.0, a.gauge["Alloc"])
+}
+
+func TestAgent_AckSent_SkipsNilDelta(t *testing.T) {
+	a := NewAgent(&http.Client{}, "", "")
+	a.counter["PollCount"] = 10
+
+	assert.NotPanics(t, func() {
+		a.AckSent([]models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: nil}})
+	})
+	assert.Equal(t, int64(10), a.counter["PollCount"])
+}
+
+// TestAgent_AckSent_PreservesIncrementsDuringRoundTrip covers the bug AckSent
+// fixed: acking a sent snapshot must subtract exactly what was sent, not reset
+// the counter to zero, so increments collected while the report was in flight
+// survive.
+func TestAgent_AckSent_PreservesIncrementsDuringRoundTrip(t *testing.T) {
+	a := NewAgent(&http.Client{}, "", "")
+	a.Collect() // PollCount = 1
+	sent := a.Snapshot()
+
+	a.Collect() // increment that happens during the "network round-trip"; PollCount = 2
+
+	a.AckSent(sent)
+
+	assert.Equal(t, int64(1), a.counter["PollCount"])
+}
+
+func TestAgent_AckSent_ConcurrentWithCollect(t *testing.T) {
+	a := NewAgent(&http.Client{}, "", "")
+	const n = 500
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			a.Collect()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		zero := int64(0)
+		for i := 0; i < n; i++ {
+			a.AckSent([]models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: &zero}})
+		}
+	}()
+	wg.Wait()
+
+	assert.Equal(t, int64(n), a.counter["PollCount"])
+}
+
 func TestAgent_ConcurrentCollectReport(t *testing.T) {
 	const requests = 1000
 	tests := []struct {
