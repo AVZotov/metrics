@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"time"
 	
 	"github.com/AVZotov/metrics/internal/audit"
+	"github.com/AVZotov/metrics/internal/buildinfo"
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
@@ -30,7 +30,7 @@ var buildCommit string
 const auditShutdownTimeout = 1 * time.Second
 
 func main() {
-	printBuildDetails()
+	buildinfo.Print(buildVersion, buildDate, buildCommit)
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
@@ -159,20 +159,4 @@ func initRepo(
 	}
 	
 	return repo, nil
-}
-
-func printBuildDetails() {
-	const def = "N/A"
-	if buildVersion == "" {
-		buildVersion = def
-	}
-	fmt.Printf("Build Version: %s\n", buildVersion)
-	if buildDate == "" {
-		buildDate = def
-	}
-	fmt.Printf("Build Date: %s\n", buildDate)
-	if buildCommit == "" {
-		buildCommit = def
-	}
-	fmt.Printf("Build Commit: %s\n", buildCommit)
 }

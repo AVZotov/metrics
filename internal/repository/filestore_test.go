@@ -226,8 +226,8 @@ func TestFileStore_ConcurrentSaveAndGetAll(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, err := ds.GetAll()
-			assert.NoError(t, err)
+			_, getErr := ds.GetAll()
+			assert.NoError(t, getErr)
 		}()
 	}
 	wg.Wait()

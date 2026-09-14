@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AVZotov/metrics/internal/agent"
+	"github.com/AVZotov/metrics/internal/buildinfo"
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
@@ -24,7 +25,7 @@ var buildDate string
 var buildCommit string
 
 func main() {
-	printBuildDetails()
+	buildinfo.Print(buildVersion, buildDate, buildCommit)
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
@@ -134,20 +135,4 @@ func logReportError(logger *zap.Logger, err error) {
 		return
 	}
 	logger.Error("report failed", zap.Error(err))
-}
-
-func printBuildDetails() {
-	const def = "N/A"
-	if buildVersion == "" {
-		buildVersion = def
-	}
-	fmt.Printf("Build Version: %s\n", buildVersion)
-	if buildDate == "" {
-		buildDate = def
-	}
-	fmt.Printf("Build Date: %s\n", buildDate)
-	if buildCommit == "" {
-		buildCommit = def
-	}
-	fmt.Printf("Build Commit: %s\n", buildCommit)
 }

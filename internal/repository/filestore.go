@@ -62,22 +62,7 @@ func (d *FileStore) Save(m *models.Metrics) (err error) {
 	if !found {
 		metrics = append(metrics, m)
 	}
-	data, err := json.Marshal(metrics)
-	if err != nil {
-		return err
-	}
-	fullPath := filepath.Join(d.path, d.name)
-	file, err := os.Create(fullPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	_, err = file.Write(data)
-	return err
+	return d.writeAll(metrics)
 }
 
 // Get reads a single metric by id and type. Returns
@@ -134,9 +119,15 @@ func (d *FileStore) readAll() ([]*models.Metrics, error) {
 
 // SaveAll overwrites the file with the given metrics. Returns an error if
 // marshaling or writing the file fails.
-func (d *FileStore) SaveAll(metrics []*models.Metrics) (err error) {
+func (d *FileStore) SaveAll(metrics []*models.Metrics) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.writeAll(metrics)
+}
+
+// writeAll marshals metrics to JSON and overwrites the store's file with
+// them. Callers must hold d.mu.
+func (d *FileStore) writeAll(metrics []*models.Metrics) (err error) {
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return err
