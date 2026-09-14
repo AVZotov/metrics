@@ -69,7 +69,7 @@ func TestFileObserver_Notify_MultipleSequentialCalls(t *testing.T) {
 
 	f, err := os.Open(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var got []Event
 	scanner := bufio.NewScanner(f)
@@ -103,7 +103,7 @@ func TestFileObserver_Notify_Concurrent(t *testing.T) {
 
 	f, err := os.Open(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	lineCount := 0
 	scanner := bufio.NewScanner(f)

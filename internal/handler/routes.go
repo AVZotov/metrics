@@ -14,20 +14,24 @@ import (
 func NewRouter(h *Handler, logger *zap.Logger, key string, enablePprof bool) *chi.Mux {
 	mux := chi.NewMux()
 	mux.Use(loggingMiddleware(logger))
-	register(mux, h, key, enablePprof)
+	register(mux, h, logger, key, enablePprof)
 	return mux
 }
 
-func register(mux *chi.Mux, h *Handler, key string, enablePprof bool) {
+func register(mux *chi.Mux, h *Handler, logger *zap.Logger, key string, enablePprof bool) {
 	if enablePprof {
 		mux.Mount("/debug", middleware.Profiler())
 	}
-	mux.Get("/", h.getAll)
 	mux.Get("/ping", h.ping)
 
 	mux.Group(func(mux chi.Router) {
+		mux.Use(compressMiddleware(logger))
+		mux.Get("/", h.getAll)
+	})
+
+	mux.Group(func(mux chi.Router) {
 		mux.Use(signMiddleware(key))
-		mux.Use(compressMiddleware())
+		mux.Use(compressMiddleware(logger))
 		mux.Post("/update/{type}/{name}/{value}", h.update)
 		mux.Get("/value/{type}/{name}", h.getValue)
 	})
@@ -35,7 +39,7 @@ func register(mux *chi.Mux, h *Handler, key string, enablePprof bool) {
 	mux.Group(
 		func(mux chi.Router) {
 			mux.Use(signMiddleware(key))
-			mux.Use(compressMiddleware())
+			mux.Use(compressMiddleware(logger))
 			mux.Use(contentTypeMiddleware("application/json"))
 			mux.Post("/update", h.updateJSON)
 			mux.Post("/update/", h.updateJSON)

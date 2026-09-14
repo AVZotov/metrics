@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	apperrors "github.com/AVZotov/metrics/internal/errors"
@@ -175,4 +177,90 @@ func TestDataStore_Get_FileNotExist(t *testing.T) {
 
 	_, err = ds.Get("any", models.Gauge)
 	assert.ErrorIs(t, err, apperrors.ErrNotFound)
+}
+
+// TestFileStore_ConcurrentSave_NoCorruption exercises the read-modify-write
+// race Save's mutex closes: without it, concurrent Save calls can each read
+// the file before the others' writes land and clobber each other's entries,
+// or GetAll can read a file mid-truncate. Run with -race.
+func TestFileStore_ConcurrentSave_NoCorruption(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("metric-%d", i)
+			assert.NoError(t, ds.Save(&models.Metrics{ID: id, MType: models.Gauge, Value: gaugePtr(float64(i))}))
+		}()
+	}
+	wg.Wait()
+
+	all, err := ds.GetAll()
+	require.NoError(t, err)
+	assert.Len(t, all, goroutines, "every concurrent Save should have survived without clobbering the others")
+}
+
+// TestFileStore_ConcurrentSaveAndGetAll checks that a GetAll running
+// concurrently with Saves never observes a partially written (corrupted)
+// file, since readAll and Save now share the same mutex.
+func TestFileStore_ConcurrentSaveAndGetAll(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+
+	const goroutines = 30
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2)
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("metric-%d", i)
+			assert.NoError(t, ds.Save(&models.Metrics{ID: id, MType: models.Gauge, Value: gaugePtr(float64(i))}))
+		}()
+		go func() {
+			defer wg.Done()
+			_, getErr := ds.GetAll()
+			assert.NoError(t, getErr)
+		}()
+	}
+	wg.Wait()
+
+	all, err := ds.GetAll()
+	require.NoError(t, err)
+	assert.Len(t, all, goroutines)
+}
+
+// TestFileStore_ConcurrentSaveAll checks that concurrent SaveAll calls, which
+// each fully overwrite the file, never leave behind a partially written file
+// that GetAll then fails to decode.
+func TestFileStore_ConcurrentSaveAll(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+
+	const goroutines = 30
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			metrics := []*models.Metrics{
+				{ID: fmt.Sprintf("m%d", i), MType: models.Gauge, Value: gaugePtr(float64(i))},
+			}
+			assert.NoError(t, ds.SaveAll(metrics))
+		}()
+	}
+	wg.Wait()
+
+	all, err := ds.GetAll()
+	require.NoError(t, err, "file should be valid JSON, not corrupted by interleaved writes")
+	require.Len(t, all, 1, "SaveAll always overwrites, so exactly one goroutine's write should be the final state")
 }

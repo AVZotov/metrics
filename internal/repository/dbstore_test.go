@@ -66,7 +66,7 @@ func newTestDBStore(t *testing.T) *DBStore {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = store.pool.Exec(ctx, "TRUNCATE TABLE metrics")
-		store.Close()
+		_ = store.Close()
 	})
 	return store
 }

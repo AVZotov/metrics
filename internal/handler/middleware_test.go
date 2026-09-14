@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AVZotov/metrics/internal/sign"
+	"go.uber.org/zap"
 )
 
 func BenchmarkCompressMiddleware(b *testing.B) {
@@ -30,7 +31,7 @@ func BenchmarkCompressMiddleware(b *testing.B) {
 							_, _ = w.Write(bm.data)
 						},
 					)
-					handler := compressMiddleware()(next)
+					handler := compressMiddleware(zap.NewNop())(next)
 					for b.Loop() {
 						b.StopTimer()
 						req := httptest.NewRequest(http.MethodGet, "/", nil)

@@ -104,8 +104,8 @@ func (d *DBStore) GetAll() ([]*models.Metrics, error) {
 				rows, func(row pgx.CollectableRow) (*models.Metrics, error) {
 					m := &models.Metrics{}
 					var hash *string
-					if err := row.Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &hash); err != nil {
-						return nil, err
+					if scanErr := row.Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &hash); scanErr != nil {
+						return nil, scanErr
 					}
 					if hash != nil {
 						m.Hash = *hash
@@ -121,14 +121,6 @@ func (d *DBStore) GetAll() ([]*models.Metrics, error) {
 	}
 	return metrics, nil
 }
-
-//Александр привет!
-// Ты давал комментарий к коду
-//"а также counter-метрики перезаписываются вместо накопления при upsert"
-// на всякий случай еще добавил комментарий к самим функциям
-// Но возможно я не совсем точно понял сам комментарий
-//я использовал MemStore как единственный источник финальных данных
-// и хотел уйти от дублирования логики накопления
 
 // SaveAll delta is overwritten, not summed: MemStore already accumulates the
 // total before Dump() is called, so this upsert just persists the

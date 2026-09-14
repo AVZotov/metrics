@@ -3,14 +3,6 @@ version: '3'
 silent: true
 
 tasks:
-  generate:
-    desc: "Generate templ files"
-    run: once
-    cmds:
-      - echo "🔄 Generating templ files..."
-      - templ generate
-      - echo "✅ Generation complete"
-
   init:
     desc: "Initialize build directory"
     run: once
@@ -21,7 +13,7 @@ tasks:
 
   build-server:
     desc: "Build server binary"
-    deps: [init, generate]
+    deps: [init]
     cmds:
       - echo "🔨 Building server..."
       - go build -o .task/server ./cmd/server
@@ -29,7 +21,7 @@ tasks:
 
   build-client:
     desc: "Build client binary"
-    deps: [init, generate]
+    deps: [init]
     cmds:
       - echo "🔨 Building client..."
       - go build -o .task/client ./cmd/agent

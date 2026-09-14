@@ -13,13 +13,19 @@ import (
 	"time"
 
 	"github.com/AVZotov/metrics/internal/agent"
+	"github.com/AVZotov/metrics/internal/buildinfo"
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"go.uber.org/zap"
 )
 
+var buildVersion string
+var buildDate string
+var buildCommit string
+
 func main() {
+	buildinfo.Print(buildVersion, buildDate, buildCommit)
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
@@ -113,9 +119,12 @@ func reportWorker(ctx context.Context, jobs <-chan []models.Metrics, a *agent.Ag
 		case <-ctx.Done():
 			return
 		case metrics := <-jobs:
-			if err := a.SendWithRetry(ctx, metrics); err != nil {
+			err := a.SendWithRetry(ctx, metrics)
+			if err != nil {
 				logReportError(logger, err)
+				continue
 			}
+			a.AckSent(metrics)
 		}
 	}
 }
