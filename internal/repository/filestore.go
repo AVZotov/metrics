@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 )
@@ -107,7 +107,7 @@ func (d *FileStore) readAll() ([]*models.Metrics, error) {
 	defer func() {
 		_ = file.Close()
 	}()
-	
+
 	if err = json.NewDecoder(file).Decode(&metrics); err != nil {
 		if errors.Is(err, io.EOF) {
 			return metrics, nil
@@ -125,25 +125,39 @@ func (d *FileStore) SaveAll(metrics []*models.Metrics) error {
 	return d.writeAll(metrics)
 }
 
-// writeAll marshals metrics to JSON and overwrites the store's file with
-// them. Callers must hold d.mu.
+// writeAll marshals metrics to JSON and atomically overwrites the store's
+// file with them, via a temp file + rename so a crash mid-write can't
+// leave a truncated/corrupt store
 func (d *FileStore) writeAll(metrics []*models.Metrics) (err error) {
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return err
 	}
-	fullPath := filepath.Join(d.path, d.name)
-	file, err := os.Create(fullPath)
+
+	tmpFile, err := os.CreateTemp(d.path, "temp-*")
 	if err != nil {
 		return err
 	}
+	tmpName := tmpFile.Name()
+
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
+		_ = os.Remove(tmpName)
+	}()
+	defer func() {
+		if closeErr := tmpFile.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	_, err = file.Write(data)
-	return err
+
+	if _, err = tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err = tmpFile.Sync(); err != nil {
+		return err
+	}
+
+	fullPath := filepath.Join(d.path, d.name)
+	return os.Rename(tmpName, fullPath)
 }
 
 // Close is a no-op; FileStore doesn't keep the file open between writes.
