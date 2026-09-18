@@ -4,10 +4,14 @@
 package encrypt
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"io"
 	"os"
 	
 	appErr "github.com/AVZotov/metrics/internal/errors"
@@ -61,4 +65,33 @@ func loadPublicKey(path string) (key *rsa.PublicKey, err error) {
 	err = errors.Join(err, pkcsErr)
 	
 	return nil, errors.Join(err, appErr.ErrUnexpectedKeyType)
+}
+
+func generateAESKey() ([]byte, error) {
+	const size = 32
+	key := make([]byte, size)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func encryptAES(key, plaintext []byte) ([]byte, error) {
+	aesBlock, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcmBlock, err := cipher.NewGCM(aesBlock)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcmBlock.NonceSize())
+	_, err = io.ReadFull(rand.Reader, nonce)
+	if err != nil {
+		return nil, err
+	}
+	
+	sealed := gcmBlock.Seal(nonce, nonce, plaintext, nil)
+	
+	return sealed, nil
 }
