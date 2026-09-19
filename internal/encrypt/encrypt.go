@@ -8,6 +8,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -90,8 +91,14 @@ func encryptAES(key, plaintext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	
 	sealed := gcmBlock.Seal(nonce, nonce, plaintext, nil)
 	
 	return sealed, nil
+}
+
+// encryptAESKey encrypts an AES key with the recipient's RSA public key
+// using OAEP
+func encryptAESKey(pub *rsa.PublicKey, aesKey []byte) ([]byte, error) {
+	hash := sha256.New()
+	return rsa.EncryptOAEP(hash, rand.Reader, pub, aesKey, nil)
 }
