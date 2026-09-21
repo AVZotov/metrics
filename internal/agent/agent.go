@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AVZotov/metrics/internal/encrypt"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/sign"
@@ -29,21 +31,34 @@ type Agent struct {
 	gauge   map[string]float64
 	counter map[string]int64
 	key     string
+	pubKey  *rsa.PublicKey
 	cpuWarm sync.Once
 }
 
 // NewAgent creates an Agent that sends metrics to baseURL using client.
-// If key is non-empty, outgoing requests are signed with it.
-func NewAgent(client *http.Client, baseURL string, key string) *Agent {
+// If key is non-empty, outgoing requests are signed with it. If
+// cryptoKeyPath is non-empty, it's loaded as an RSA public key and outgoing
+// bodies are hybrid-encrypted with it; returns an error if the key can't be
+// loaded.
+func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string) (*Agent, error) {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
-	return &Agent{
+	a := &Agent{
 		client:  client,
 		baseURL: baseURL,
 		gauge:   gauge,
 		counter: counter,
 		key:     key,
 	}
+	if cryptoKeyPath != "" {
+		pubKey, err := encrypt.LoadPublicKey(cryptoKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		a.pubKey = pubKey
+	}
+
+	return a, nil
 }
 
 // Collect reads runtime.MemStats and updates the agent's gauge and counter values.
@@ -90,9 +105,11 @@ func (a *Agent) Collect() {
 // its first real measurement needs a baseline to compare against.
 // Returns an error if reading memory or CPU stats fails.
 func (a *Agent) CollectGopsutil() error {
-	a.cpuWarm.Do(func() {
-		_, _ = cpu.Percent(0, true)
-	})
+	a.cpuWarm.Do(
+		func() {
+			_, _ = cpu.Percent(0, true)
+		},
+	)
 
 	vm, err := mem.VirtualMemory()
 	if err != nil {
@@ -210,15 +227,28 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 		return fmt.Errorf("could not close gzip writer: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, buf)
+	body := buf.Bytes()
+	var encryptedKeyHeader string
+	if a.pubKey != nil {
+		var err error
+		body, encryptedKeyHeader, err = encrypt.EncryptHybrid(a.pubKey, body)
+		if err != nil {
+			return err
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
+	if encryptedKeyHeader != "" {
+		req.Header.Set("X-Crypto-Key", encryptedKeyHeader)
+	}
 
 	if a.key != "" {
-		signature := sign.Sign(buf.Bytes(), a.key)
+		signature := sign.Sign(body, a.key)
 		req.Header.Set("HashSHA256", signature)
 	}
 

@@ -48,8 +48,10 @@ func run(logger *zap.Logger) error {
 	}
 	client := &http.Client{}
 	baseURL := fmt.Sprintf("http://%s", cfg.String())
-	a := agent.NewAgent(client, baseURL, cfg.Key)
-
+	a, err := agent.NewAgent(client, baseURL, cfg.Key, cfg.CryptoKey)
+	if err != nil {
+		return err
+	}
 	jobs := make(chan []models.Metrics, cfg.RateLimit)
 	for i := uint(0); i < cfg.RateLimit; i++ {
 		go reportWorker(ctx, jobs, a, logger)

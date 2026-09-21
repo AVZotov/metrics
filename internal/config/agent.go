@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	
+
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
 )
@@ -17,7 +17,9 @@ type AgentConfig struct {
 	ReportInterval uint   `env:"REPORT_INTERVAL"`
 	RateLimit      uint   `env:"RATE_LIMIT"`
 	Key            string `env:"KEY"`
-	CryptoKey      string `env:"CRYPTO_KEY"`
+	// CryptoKey is the path to an RSA public key PEM file used to encrypt
+	// agent-to-server payloads. Empty disables encryption.
+	CryptoKey string `env:"CRYPTO_KEY"`
 }
 
 // NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
@@ -53,15 +55,15 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	rateLimitFlag := flag.Uint("l", rateLimit, "max number of concurrent outgoing report requests")
 	key := flag.String("k", "", "signing key")
 	cryptoKey := flag.String("crypto-key", "", "path to RSA public key file for encrypting agent-to-server messages")
-	
+
 	flag.Parse()
-	
+
 	cfg.PollInterval = *pollIntervalFlag
 	cfg.ReportInterval = *reportIntervalFlag
 	cfg.RateLimit = *rateLimitFlag
 	cfg.Key = *key
 	cfg.CryptoKey = *cryptoKey
-	
+
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
