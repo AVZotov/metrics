@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-
+	
 	dbcfg "github.com/AVZotov/metrics/internal/config/db"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
@@ -33,6 +33,7 @@ type ServerConfig struct {
 	DB                  dbcfg.Config
 	Key                 string `env:"KEY"`
 	Audit               AuditConfig
+	CryptoKey           string `env:"CRYPTO_KEY"`
 }
 
 // NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
@@ -59,6 +60,9 @@ func NewServerConfig() (*ServerConfig, error) {
 	if err := validateAuditURL(conf); err != nil {
 		return nil, err
 	}
+	if err := validateCryptoKey(conf); err != nil {
+		return nil, err
+	}
 	return conf, nil
 }
 
@@ -83,9 +87,12 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.StringVar(&config.Key, "k", "", "signing key")
 	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")
 	flag.StringVar(&config.Audit.URL, "audit-url", "", "URL to send audit events")
-
+	flag.StringVar(
+		&config.CryptoKey, "crypto-key", "", "path to RSA private key file for decrypting agent-to-server messages",
+	)
+	
 	flag.Parse()
-
+	
 	flag.Visit(
 		func(f *flag.Flag) {
 			if f.Name == "d" {
@@ -93,7 +100,7 @@ func parseServerFlags(config *ServerConfig) error {
 			}
 		},
 	)
-
+	
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
@@ -151,7 +158,7 @@ func validateAuditURL(cfg *ServerConfig) error {
 	if cfg.Audit.URL == "" {
 		return nil
 	}
-
+	
 	parsed, err := url.Parse(cfg.Audit.URL)
 	if err != nil {
 		return fmt.Errorf("audit URL is invalid: %w", err)
@@ -159,6 +166,16 @@ func validateAuditURL(cfg *ServerConfig) error {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return errors.New("audit URL must be an absolute URL with scheme and host")
 	}
+	
+	return nil
+}
 
+func validateCryptoKey(cfg *ServerConfig) error {
+	if cfg.CryptoKey == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.CryptoKey); err != nil {
+		return apperrors.ErrCryptoKeyUnavailable
+	}
 	return nil
 }
