@@ -17,6 +17,9 @@ type AgentConfig struct {
 	ReportInterval uint   `env:"REPORT_INTERVAL"`
 	RateLimit      uint   `env:"RATE_LIMIT"`
 	Key            string `env:"KEY"`
+	// CryptoKey is the path to an RSA public key PEM file used to encrypt
+	// agent-to-server payloads. Empty disables encryption.
+	CryptoKey string `env:"CRYPTO_KEY"`
 }
 
 // NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
@@ -51,6 +54,7 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	reportIntervalFlag := flag.Uint("r", reportInterval, "report interval in seconds")
 	rateLimitFlag := flag.Uint("l", rateLimit, "max number of concurrent outgoing report requests")
 	key := flag.String("k", "", "signing key")
+	cryptoKey := flag.String("crypto-key", "", "path to RSA public key file for encrypting agent-to-server messages")
 
 	flag.Parse()
 
@@ -58,6 +62,7 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	cfg.ReportInterval = *reportIntervalFlag
 	cfg.RateLimit = *rateLimitFlag
 	cfg.Key = *key
+	cfg.CryptoKey = *cryptoKey
 
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
@@ -82,6 +87,11 @@ func validateAgentConfig(cfg *AgentConfig) error {
 	}
 	if cfg.RateLimit == 0 {
 		return apperrors.ErrInvalidRateLimit
+	}
+	if cfg.CryptoKey != "" {
+		if _, err := os.Stat(cfg.CryptoKey); err != nil {
+			return apperrors.ErrCryptoKeyUnavailable
+		}
 	}
 	return nil
 }

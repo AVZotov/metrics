@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/config"
+	"github.com/AVZotov/metrics/internal/encrypt"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -65,7 +69,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger, "", false)
+	return NewRouter(h, logger, "", false, nil)
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -77,13 +81,13 @@ func setupRouter(t *testing.T) chi.Router {
 	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger, "", false)
+	return NewRouter(h, logger, "", false, nil)
 }
 
 func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", false)
+	router := NewRouter(h, logger, "", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
@@ -95,7 +99,7 @@ func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 func TestNewRouter_PprofEnabled(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", true)
+	router := NewRouter(h, logger, "", true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
@@ -958,4 +962,117 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	decompressed, err := io.ReadAll(gr)
 	require.NoError(t, err)
 	assert.Equal(t, respBody, string(decompressed))
+}
+
+func TestDecryptMiddleware_NoHeaderNoPrivateKey_Passthrough(t *testing.T) {
+	body := `{"id":"cpu","type":"gauge","value":1.5}`
+	var gotBody string
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	mw := decryptMiddleware(nil, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, body, gotBody)
+}
+
+func TestDecryptMiddleware_NoHeaderWithPrivateKeyConfigured_Passthrough(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	body := `{"id":"cpu","type":"gauge","value":1.5}`
+	var gotBody string
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	mw := decryptMiddleware(key, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, body, gotBody)
+}
+
+func TestDecryptMiddleware_HeaderPresentNoPrivateKey_Returns500WithoutCallingNext(t *testing.T) {
+	nextCalls := 0
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			nextCalls++
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	mw := decryptMiddleware(nil, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("irrelevant body"))
+	req.Header.Set("X-Crypto-Key", "anything")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, 0, nextCalls, "next handler must not run when a key is required but unconfigured")
+}
+
+func TestDecryptMiddleware_ValidHeaderAndBody_DecryptsBeforeNext(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	plaintext := []byte(`{"id":"cpu","type":"gauge","value":1.5}`)
+	encryptedData, encryptedKeyB64, err := encrypt.EncryptHybrid(&key.PublicKey, plaintext)
+	require.NoError(t, err)
+
+	var gotBody string
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	mw := decryptMiddleware(key, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(encryptedData))
+	req.Header.Set("X-Crypto-Key", encryptedKeyB64)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, string(plaintext), gotBody)
+}
+
+func TestDecryptMiddleware_InvalidBase64Header_Returns400(t *testing.T) {
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	mw := decryptMiddleware(key, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("body"))
+	req.Header.Set("X-Crypto-Key", "not-valid-base64!!!")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestDecryptMiddleware_UndecryptableCiphertext_Returns400(t *testing.T) {
+	next := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+	)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	mw := decryptMiddleware(key, zap.NewNop())(next)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not valid gcm ciphertext"))
+	req.Header.Set("X-Crypto-Key", base64.StdEncoding.EncodeToString([]byte("garbage-encrypted-key")))
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

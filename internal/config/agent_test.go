@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"os"
+	"path/filepath"
 	"testing"
 
 	apperrors "github.com/AVZotov/metrics/internal/errors"
@@ -62,6 +63,44 @@ func TestValidateAgentConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateAgentConfig(&tt.cfg)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestValidateAgentConfig_CryptoKey(t *testing.T) {
+	existing := filepath.Join(t.TempDir(), "key.pem")
+	require.NoError(t, os.WriteFile(existing, []byte("dummy"), 0o600))
+
+	tests := []struct {
+		name    string
+		cfg     AgentConfig
+		wantErr error
+	}{
+		{
+			name:    "empty crypto key path is valid",
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10, RateLimit: 1, CryptoKey: ""},
+			wantErr: nil,
+		},
+		{
+			name:    "existing crypto key path is valid",
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10, RateLimit: 1, CryptoKey: existing},
+			wantErr: nil,
+		},
+		{
+			name:    "nonexistent crypto key path returns error",
+			cfg:     AgentConfig{PollInterval: 2, ReportInterval: 10, RateLimit: 1, CryptoKey: "/nonexistent/path/to/key.pem"},
+			wantErr: apperrors.ErrCryptoKeyUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAgentConfig(&tt.cfg)
+			if tt.wantErr == nil {
+				assert.NoError(t, err)
+				return
+			}
 			assert.ErrorIs(t, err, tt.wantErr)
 		})
 	}

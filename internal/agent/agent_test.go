@@ -3,9 +3,15 @@ package agent
 import (
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -14,16 +20,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// writeTestPublicKeyPEM generates a throwaway RSA key pair and writes its
+// public half to a PKIX PEM file in t's temp dir, returning the file path.
+func writeTestPublicKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+
+	block := &pem.Block{Type: "PUBLIC KEY", Bytes: der}
+	path := filepath.Join(t.TempDir(), "pubkey.pem")
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(block), 0o600))
+
+	return path
+}
+
 func TestAgent_Collect_Check_Count(t *testing.T) {
 	want := int64(1)
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.Collect()
 	got := a.counter["PollCount"]
 	assert.Equal(t, want, got)
 }
 
 func TestAgent_Collect_Check_Gauge(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.Collect()
 	for _, k := range gMetrics {
 		assert.Contains(t, a.gauge, k, "metric %s not found in gauge", k)
@@ -42,9 +68,10 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
 	a.Collect()
-	err := a.Report(context.Background())
+	err = a.Report(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,9 +91,10 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
 	a.Collect()
-	err := a.Report(context.Background())
+	err = a.Report(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,16 +102,40 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 
 func TestNewAgent(t *testing.T) {
 	client := &http.Client{}
-	a := NewAgent(client, "http://localhost:8080", "")
+	a, err := NewAgent(client, "http://localhost:8080", "", "")
+	require.NoError(t, err)
 
 	assert.Equal(t, "http://localhost:8080", a.baseURL)
 	assert.NotNil(t, a.gauge)
 	assert.NotNil(t, a.counter)
 	assert.Equal(t, client, a.client)
+	assert.Nil(t, a.pubKey)
+}
+
+func TestNewAgent_EmptyCryptoKeyPath_NoPubKey(t *testing.T) {
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "")
+	require.NoError(t, err)
+	assert.Nil(t, a.pubKey)
+}
+
+func TestNewAgent_ValidCryptoKeyPath_SetsPubKey(t *testing.T) {
+	path := writeTestPublicKeyPEM(t)
+
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", path)
+	require.NoError(t, err)
+	require.NotNil(t, a)
+	assert.NotNil(t, a.pubKey)
+}
+
+func TestNewAgent_InvalidCryptoKeyPath_ReturnsError(t *testing.T) {
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "/nonexistent/path/to/key.pem")
+	assert.Error(t, err)
+	assert.Nil(t, a)
 }
 
 func TestAgent_Collect_PollCount_Accumulates(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.Collect()
 	a.Collect()
 	a.Collect()
@@ -101,7 +153,8 @@ func TestAgent_Report_ContentEncoding(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 }
@@ -118,7 +171,8 @@ func TestAgent_Report_URL(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 
@@ -150,7 +204,8 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
 
@@ -172,21 +227,24 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 }
 
 func TestAgent_Report_Error_On_Unreachable_Server(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://127.0.0.1:1", "")
+	a, err := NewAgent(&http.Client{}, "http://127.0.0.1:1", "", "")
+	require.NoError(t, err)
 	a.Collect()
-	err := a.Report(context.Background())
+	err = a.Report(context.Background())
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_InvalidGaugeValue(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://localhost:8080", "")
-	err := a.sendMetricJSON(models.Gauge, "TestMetric", "notanumber")
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "")
+	require.NoError(t, err)
+	err = a.sendMetricJSON(models.Gauge, "TestMetric", "notanumber")
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_InvalidCounterValue(t *testing.T) {
-	a := NewAgent(&http.Client{}, "http://localhost:8080", "")
-	err := a.sendMetricJSON(models.Counter, "PollCount", "notanumber")
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "")
+	require.NoError(t, err)
+	err = a.sendMetricJSON(models.Counter, "PollCount", "notanumber")
 	assert.Error(t, err)
 }
 
@@ -200,8 +258,9 @@ func TestAgent_SendMetricJSON_NonOKStatus(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
-	err := a.sendMetricJSON(models.Gauge, "Alloc", "1.5")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
+	err = a.sendMetricJSON(models.Gauge, "Alloc", "1.5")
 	assert.Error(t, err)
 }
 
@@ -217,13 +276,15 @@ func TestAgent_SendMetric(t *testing.T) {
 	)
 	defer server.Close()
 
-	a := NewAgent(&http.Client{}, server.URL, "")
-	err := a.sendMetric("gauge", "Alloc", "42.5")
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
+	err = a.sendMetric("gauge", "Alloc", "42.5")
 	require.NoError(t, err)
 }
 
 func TestAgent_AckSent_SubtractsDelta(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 
 	delta := int64(4)
@@ -233,7 +294,8 @@ func TestAgent_AckSent_SubtractsDelta(t *testing.T) {
 }
 
 func TestAgent_AckSent_SkipsNonCounterMetrics(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 	a.gauge["Alloc"] = 42
 
@@ -245,7 +307,8 @@ func TestAgent_AckSent_SkipsNonCounterMetrics(t *testing.T) {
 }
 
 func TestAgent_AckSent_SkipsNilDelta(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 
 	assert.NotPanics(t, func() {
@@ -259,7 +322,8 @@ func TestAgent_AckSent_SkipsNilDelta(t *testing.T) {
 // the counter to zero, so increments collected while the report was in flight
 // survive.
 func TestAgent_AckSent_PreservesIncrementsDuringRoundTrip(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	a.Collect() // PollCount = 1
 	sent := a.Snapshot()
 
@@ -271,7 +335,8 @@ func TestAgent_AckSent_PreservesIncrementsDuringRoundTrip(t *testing.T) {
 }
 
 func TestAgent_AckSent_ConcurrentWithCollect(t *testing.T) {
-	a := NewAgent(&http.Client{}, "", "")
+	a, err := NewAgent(&http.Client{}, "", "", "")
+	require.NoError(t, err)
 	const n = 500
 
 	var wg sync.WaitGroup
@@ -318,7 +383,8 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 				),
 			)
 			defer server.Close()
-			a := NewAgent(&http.Client{}, server.URL, "")
+			a, err := NewAgent(&http.Client{}, server.URL, "", "")
+			require.NoError(t, err)
 			t.Run(
 				tt.name, func(t *testing.T) {
 					for i := 0; i < requests; i++ {
