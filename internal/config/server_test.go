@@ -183,6 +183,44 @@ func TestValidateAuditURL(t *testing.T) {
 	}
 }
 
+func TestValidateCryptoKey(t *testing.T) {
+	existing := filepath.Join(t.TempDir(), "key.pem")
+	require.NoError(t, os.WriteFile(existing, []byte("dummy"), 0o600))
+
+	tests := []struct {
+		name    string
+		cfg     ServerConfig
+		wantErr error
+	}{
+		{
+			name:    "empty crypto key path is valid",
+			cfg:     ServerConfig{CryptoKey: ""},
+			wantErr: nil,
+		},
+		{
+			name:    "existing crypto key path is valid",
+			cfg:     ServerConfig{CryptoKey: existing},
+			wantErr: nil,
+		},
+		{
+			name:    "nonexistent crypto key path returns error",
+			cfg:     ServerConfig{CryptoKey: "/nonexistent/path/to/key.pem"},
+			wantErr: apperrors.ErrCryptoKeyUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCryptoKey(&tt.cfg)
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestParseServerEnv(t *testing.T) {
 	tests := []struct {
 		name            string
