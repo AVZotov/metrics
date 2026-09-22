@@ -134,3 +134,63 @@ func TestEncryptHybrid_ProducesFreshKeyAndCiphertextEachCall(t *testing.T) {
 	assert.NotEqual(t, data1, data2, "ciphertext should differ between calls (fresh AES key/nonce)")
 	assert.NotEqual(t, keyB64_1, keyB64_2, "encrypted AES key should differ between calls (RSA-OAEP is randomized)")
 }
+
+func TestDecryptHybrid_RoundTrip(t *testing.T) {
+	key := generateTestRSAKey(t)
+	plaintext := []byte("some metrics payload")
+
+	encryptedData, encryptedKeyB64, err := EncryptHybrid(&key.PublicKey, plaintext)
+	require.NoError(t, err)
+	encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
+	require.NoError(t, err)
+
+	got, err := DecryptHybrid(key, encryptedKey, encryptedData)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, got)
+}
+
+func TestDecryptHybrid_WrongPrivateKeyFails(t *testing.T) {
+	key := generateTestRSAKey(t)
+	wrongKey := generateTestRSAKey(t)
+	plaintext := []byte("some metrics payload")
+
+	encryptedData, encryptedKeyB64, err := EncryptHybrid(&key.PublicKey, plaintext)
+	require.NoError(t, err)
+	encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
+	require.NoError(t, err)
+
+	_, err = DecryptHybrid(wrongKey, encryptedKey, encryptedData)
+	assert.Error(t, err)
+}
+
+func TestDecryptHybrid_TruncatedCiphertextReturnsUnexpectedCipherLength(t *testing.T) {
+	key := generateTestRSAKey(t)
+	plaintext := []byte("some metrics payload")
+
+	_, encryptedKeyB64, err := EncryptHybrid(&key.PublicKey, plaintext)
+	require.NoError(t, err)
+	encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
+	require.NoError(t, err)
+
+	tooShort := []byte("short")
+	_, err = DecryptHybrid(key, encryptedKey, tooShort)
+	assert.ErrorIs(t, err, appErr.ErrUnexpectedCipherLength)
+}
+
+func TestDecryptHybrid_TamperedCiphertextFailsAuthentication(t *testing.T) {
+	key := generateTestRSAKey(t)
+	plaintext := []byte("some metrics payload")
+
+	encryptedData, encryptedKeyB64, err := EncryptHybrid(&key.PublicKey, plaintext)
+	require.NoError(t, err)
+	encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
+	require.NoError(t, err)
+
+	tampered := make([]byte, len(encryptedData))
+	copy(tampered, encryptedData)
+	tampered[len(tampered)-1] ^= 0xFF
+
+	_, err = DecryptHybrid(key, encryptedKey, tampered)
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, appErr.ErrUnexpectedCipherLength)
+}

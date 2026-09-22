@@ -33,7 +33,9 @@ type ServerConfig struct {
 	DB                  dbcfg.Config
 	Key                 string `env:"KEY"`
 	Audit               AuditConfig
-	CryptoKey           string `env:"CRYPTO_KEY"`
+	// CryptoKey is the path to an RSA private key PEM file used to decrypt
+	// agent-to-server payloads. Empty disables decryption.
+	CryptoKey string `env:"CRYPTO_KEY"`
 }
 
 // NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
