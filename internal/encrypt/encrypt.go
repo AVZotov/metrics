@@ -15,7 +15,7 @@ import (
 	"errors"
 	"io"
 	"os"
-
+	
 	appErr "github.com/AVZotov/metrics/internal/errors"
 )
 
@@ -29,7 +29,7 @@ func LoadPrivateKey(path string) (key *rsa.PrivateKey, err error) {
 	if err != nil {
 		return nil, err
 	}
-
+	
 	pemBlock, _ := pem.Decode(data)
 	if pemBlock == nil {
 		return nil, appErr.ErrInvalidPEMBlock
@@ -75,7 +75,7 @@ func LoadPublicKey(path string) (key *rsa.PublicKey, err error) {
 		return key, nil
 	}
 	err = errors.Join(err, pkcsErr)
-
+	
 	return nil, errors.Join(err, appErr.ErrUnexpectedKeyType)
 }
 
@@ -87,17 +87,17 @@ func EncryptHybrid(pub *rsa.PublicKey, data []byte) (encryptedData []byte, encry
 	if err != nil {
 		return nil, "", err
 	}
-
+	
 	encryptedData, err = encryptAESBody(aesKey, data)
 	if err != nil {
 		return nil, "", err
 	}
-
+	
 	encryptedKey, err := encryptAESKey(pub, aesKey)
 	if err != nil {
 		return nil, "", err
 	}
-
+	
 	return encryptedData, base64.StdEncoding.EncodeToString(encryptedKey), nil
 }
 
@@ -125,11 +125,49 @@ func encryptAESBody(key, plaintext []byte) ([]byte, error) {
 		return nil, err
 	}
 	sealed := gcmBlock.Seal(nonce, nonce, plaintext, nil)
-
+	
 	return sealed, nil
 }
 
 func encryptAESKey(pub *rsa.PublicKey, aesKey []byte) ([]byte, error) {
 	hash := sha256.New()
 	return rsa.EncryptOAEP(hash, rand.Reader, pub, aesKey, nil)
+}
+
+// DecryptHybrid reverses EncryptHybrid: decrypts encryptedKey with private
+// to recover the AES key, then decrypts encrypted data with it.
+func DecryptHybrid(private *rsa.PrivateKey, encryptedKey, encryptedData []byte) ([]byte, error) {
+	key, err := decryptAESKey(private, encryptedKey)
+	if err != nil {
+		return nil, err
+	}
+	
+	return decryptAESBody(key, encryptedData)
+}
+
+func decryptAESKey(private *rsa.PrivateKey, encryptedKey []byte) ([]byte, error) {
+	hash := sha256.New()
+	return rsa.DecryptOAEP(hash, nil, private, encryptedKey, nil)
+}
+
+func decryptAESBody(key []byte, encryptedData []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(encryptedData) < nonceSize {
+		return nil, appErr.ErrUnexpectedCipherLength
+	}
+	
+	nonce, ciphertext := encryptedData[:nonceSize], encryptedData[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+	return plaintext, nil
 }

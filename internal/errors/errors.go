@@ -48,6 +48,8 @@ var (
 	// ErrCryptoKeyUnavailable means -crypto-key/CRYPTO_KEY was set but the
 	// file it points to doesn't exist or can't be accessed.
 	ErrCryptoKeyUnavailable = errors.New("crypto key file is unavailable")
+	// ErrUnexpectedCipherLength returns if ciphertext is less than nonce
+	ErrUnexpectedCipherLength = errors.New("unexpected cipher length")
 )
 
 // RetryError reports the outcome of a retried operation, including every

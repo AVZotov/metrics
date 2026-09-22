@@ -3,11 +3,14 @@ package handler
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/rsa"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
+	
+	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
 	"go.uber.org/zap"
@@ -50,9 +53,11 @@ func (w *gzipWriter) Reset() {
 	w.Writer.Reset(io.Discard)
 }
 
-var gzipWriterPool = pool.New(func() *gzipWriter {
-	return &gzipWriter{gzip.NewWriter(io.Discard)}
-})
+var gzipWriterPool = pool.New(
+	func() *gzipWriter {
+		return &gzipWriter{gzip.NewWriter(io.Discard)}
+	},
+)
 
 func (w *responseCompressedWriter) checkContentType() {
 	if w.checked {
@@ -181,9 +186,9 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-
+				
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
+				
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err != nil {
 					sw.WriteHeader(http.StatusBadRequest)
@@ -191,16 +196,56 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
+				
 				signature := r.Header.Get("HashSHA256")
 				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
 				}
-
+				
 				next.ServeHTTP(sw, r)
 				finalizeSignedResponse(w, sw, key)
+			},
+		)
+	}
+}
+
+func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				encryptedKeyB64 := r.Header.Get("X-Crypto-Key")
+				if encryptedKeyB64 == "" {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if privateKey == nil {
+					http.Error(w, "server not configured for encryption", http.StatusInternalServerError)
+					logger.Warn("no private key configured on server")
+					return
+				}
+				encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					logger.Warn("base64 string decoding failed", zap.Error(err))
+					return
+				}
+				ciphertext, err := io.ReadAll(r.Body)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					logger.Warn("read body failed", zap.Error(err))
+					return
+				}
+				plaintext, err := encrypt.DecryptHybrid(privateKey, encryptedKey, ciphertext)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					logger.Warn("decrypt failed", zap.Error(err))
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(plaintext))
+				
+				next.ServeHTTP(w, r)
 			},
 		)
 	}

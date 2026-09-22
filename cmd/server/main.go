@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"log"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/AVZotov/metrics/internal/audit"
 	"github.com/AVZotov/metrics/internal/buildinfo"
 	"github.com/AVZotov/metrics/internal/config"
+	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/handler"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
@@ -54,6 +56,13 @@ func run() error {
 			logger.Error(syncErr.Error())
 		}
 	}()
+	var privateKey *rsa.PrivateKey
+	if cfg.CryptoKey != "" {
+		privateKey, err = encrypt.LoadPrivateKey(cfg.CryptoKey)
+		if err != nil {
+			return err
+		}
+	}
 	mStore := repository.NewMemStore()
 	pStore, err := getPersistStore(cfg)
 	if err != nil {
@@ -66,7 +75,7 @@ func run() error {
 	auditNotifier := audit.NewNotifier(&cfg.Audit, logger)
 	s := service.NewMetricsService(repo, auditNotifier)
 	h := handler.New(s, logger)
-	mux := handler.NewRouter(h, logger, cfg.Key, cfg.EnablePprof)
+	mux := handler.NewRouter(h, logger, cfg.Key, cfg.EnablePprof, privateKey)
 	server := &http.Server{
 		Addr:    cfg.String(),
 		Handler: mux,
