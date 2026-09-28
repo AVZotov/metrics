@@ -77,7 +77,7 @@ func TestLoadPublicKey_PKIX(t *testing.T) {
 
 	got, err := LoadPublicKey(path)
 	require.NoError(t, err)
-	assert.Equal(t, key.PublicKey.N, got.N)
+	assert.Equal(t, key.N, got.N)
 }
 
 func TestLoadPublicKey_PKCS1(t *testing.T) {
@@ -87,7 +87,7 @@ func TestLoadPublicKey_PKCS1(t *testing.T) {
 
 	got, err := LoadPublicKey(path)
 	require.NoError(t, err)
-	assert.Equal(t, key.PublicKey.N, got.N)
+	assert.Equal(t, key.N, got.N)
 }
 
 func TestLoadPublicKey_InvalidPEM(t *testing.T) {
