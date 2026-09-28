@@ -186,6 +186,151 @@ func TestParseAgentEnv(t *testing.T) {
 	}
 }
 
+func TestApplyAgentConfigFile(t *testing.T) {
+	t.Run("absent keys leave defaults untouched", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		path := writeJSONConfig(t, `{}`)
+
+		require.NoError(t, applyAgentConfigFile(cfg, path))
+
+		assert.Equal(t, host, cfg.Host)
+		assert.Equal(t, port, cfg.Port)
+		assert.Equal(t, uint(pollInterval), cfg.PollInterval)
+		assert.Equal(t, uint(reportInterval), cfg.ReportInterval)
+		assert.Equal(t, "", cfg.CryptoKey)
+	})
+
+	t.Run("present keys override defaults", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		keyPath := filepath.Join(t.TempDir(), "key.pem")
+		require.NoError(t, os.WriteFile(keyPath, []byte("dummy"), 0o600))
+		path := writeJSONConfig(
+			t, `{
+			"address": "filehost:1234",
+			"report_interval": "9s",
+			"poll_interval": "3s",
+			"crypto_key": "`+keyPath+`"
+		}`,
+		)
+
+		require.NoError(t, applyAgentConfigFile(cfg, path))
+
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 1234, cfg.Port)
+		assert.Equal(t, uint(9), cfg.ReportInterval)
+		assert.Equal(t, uint(3), cfg.PollInterval)
+		assert.Equal(t, keyPath, cfg.CryptoKey)
+	})
+
+	t.Run("missing file returns error", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		err := applyAgentConfigFile(cfg, filepath.Join(t.TempDir(), "missing.json"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileUnavailable)
+	})
+
+	t.Run("malformed JSON returns error", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		path := writeJSONConfig(t, `{"address": `)
+		err := applyAgentConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileMalformed)
+	})
+
+	t.Run("unknown key returns error", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		path := writeJSONConfig(t, `{"bogus_key": "x"}`)
+		err := applyAgentConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileMalformed)
+	})
+
+	t.Run("bad duration returns error", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		path := writeJSONConfig(t, `{"poll_interval": "not-a-duration"}`)
+		err := applyAgentConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrInvalidDuration)
+	})
+
+	t.Run("sub-second duration returns error", func(t *testing.T) {
+		cfg := &AgentConfig{}
+		setAgentDefaults(cfg)
+		path := writeJSONConfig(t, `{"report_interval": "500ms"}`)
+		err := applyAgentConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrInvalidDuration)
+	})
+}
+
+func TestNewAgentConfig_Precedence(t *testing.T) {
+	run := func(t *testing.T, args []string, env map[string]string) *AgentConfig {
+		t.Helper()
+		resetFlags()
+		origArgs := os.Args
+		os.Args = append([]string{"cmd"}, args...)
+		t.Cleanup(func() { os.Args = origArgs })
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		cfg, err := NewAgentConfig()
+		require.NoError(t, err)
+		return cfg
+	}
+
+	t.Run("default only", func(t *testing.T) {
+		cfg := run(t, nil, nil)
+		assert.Equal(t, uint(pollInterval), cfg.PollInterval)
+		assert.Equal(t, host, cfg.Host)
+	})
+
+	t.Run("file only", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"address": "filehost:1111", "poll_interval": "4s"}`)
+		cfg := run(t, []string{"-c", path}, nil)
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 1111, cfg.Port)
+		assert.Equal(t, uint(4), cfg.PollInterval)
+	})
+
+	t.Run("file overridden by flag", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"poll_interval": "4s"}`)
+		cfg := run(t, []string{"-c", path, "-p", "8"}, nil)
+		assert.Equal(t, uint(8), cfg.PollInterval)
+	})
+
+	t.Run("file overridden by env", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"poll_interval": "4s"}`)
+		cfg := run(t, []string{"-c", path}, map[string]string{"POLL_INTERVAL": "6"})
+		assert.Equal(t, uint(6), cfg.PollInterval)
+	})
+
+	t.Run("flag overridden by env: env wins", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"poll_interval": "4s"}`)
+		cfg := run(t, []string{"-c", path, "-p", "8"}, map[string]string{"POLL_INTERVAL": "6"})
+		assert.Equal(t, uint(6), cfg.PollInterval)
+	})
+
+	t.Run("absent keys keep default through full pipeline", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"poll_interval": "4s"}`)
+		cfg := run(t, []string{"-c", path}, nil)
+		assert.Equal(t, host, cfg.Host)
+		assert.Equal(t, port, cfg.Port)
+		assert.Equal(t, uint(reportInterval), cfg.ReportInterval)
+	})
+
+	t.Run("config path via CONFIG env", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"poll_interval": "11s"}`)
+		cfg := run(t, nil, map[string]string{"CONFIG": path})
+		assert.Equal(t, uint(11), cfg.PollInterval)
+	})
+}
+
 func TestParseAgentFlags(t *testing.T) {
 	tests := []struct {
 		name       string

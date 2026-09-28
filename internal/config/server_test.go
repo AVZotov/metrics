@@ -10,6 +10,188 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func writeJSONConfig(t *testing.T, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+	return path
+}
+
+func TestApplyServerConfigFile(t *testing.T) {
+	t.Run("absent keys leave defaults untouched", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{}`)
+
+		require.NoError(t, applyServerConfigFile(cfg, path))
+
+		assert.Equal(t, host, cfg.Host)
+		assert.Equal(t, port, cfg.Port)
+		assert.Equal(t, storeInterval, cfg.StoreInterval)
+		assert.Equal(t, restore, cfg.Restore)
+		assert.Equal(t, fileStoragePath, cfg.FileStoragePath)
+		assert.False(t, cfg.DSNSet)
+		assert.Equal(t, "", cfg.CryptoKey)
+	})
+
+	t.Run("present keys override defaults", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		keyPath := filepath.Join(t.TempDir(), "key.pem")
+		require.NoError(t, os.WriteFile(keyPath, []byte("dummy"), 0o600))
+		path := writeJSONConfig(
+			t, `{
+			"address": "filehost:1234",
+			"restore": false,
+			"store_interval": "5s",
+			"store_file": "/tmp/from-file.json",
+			"database_dsn": "postgres://file",
+			"crypto_key": "`+keyPath+`"
+		}`,
+		)
+
+		require.NoError(t, applyServerConfigFile(cfg, path))
+
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 1234, cfg.Port)
+		assert.False(t, cfg.Restore)
+		assert.Equal(t, 5, cfg.StoreInterval)
+		assert.Equal(t, "/tmp/from-file.json", cfg.FileStoragePath)
+		assert.True(t, cfg.DSNSet)
+		assert.Equal(t, "postgres://file", cfg.DSN)
+		assert.Equal(t, keyPath, cfg.CryptoKey)
+	})
+
+	t.Run("empty database_dsn is treated as not set", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"database_dsn": ""}`)
+
+		require.NoError(t, applyServerConfigFile(cfg, path))
+
+		assert.False(t, cfg.DSNSet)
+		assert.Equal(t, "", cfg.DSN)
+	})
+
+	t.Run("missing file returns error", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		err := applyServerConfigFile(cfg, filepath.Join(t.TempDir(), "missing.json"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileUnavailable)
+	})
+
+	t.Run("malformed JSON returns error", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"address": `)
+		err := applyServerConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileMalformed)
+	})
+
+	t.Run("unknown key returns error", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"bogus_key": "x"}`)
+		err := applyServerConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrConfigFileMalformed)
+	})
+
+	t.Run("bad duration returns error", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"store_interval": "not-a-duration"}`)
+		err := applyServerConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrInvalidDuration)
+	})
+
+	t.Run("sub-second duration returns error", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"store_interval": "500ms"}`)
+		err := applyServerConfigFile(cfg, path)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, apperrors.ErrInvalidDuration)
+	})
+}
+
+func TestNewServerConfig_Precedence(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "key.pem")
+	require.NoError(t, os.WriteFile(keyPath, []byte("dummy"), 0o600))
+
+	run := func(t *testing.T, args []string, env map[string]string) *ServerConfig {
+		t.Helper()
+		resetFlags()
+		origArgs := os.Args
+		os.Args = append([]string{"cmd"}, args...)
+		t.Cleanup(func() { os.Args = origArgs })
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		cfg, err := NewServerConfig()
+		require.NoError(t, err)
+		return cfg
+	}
+
+	t.Run("default only", func(t *testing.T) {
+		cfg := run(t, nil, nil)
+		assert.Equal(t, storeInterval, cfg.StoreInterval)
+		assert.Equal(t, host, cfg.Host)
+	})
+
+	t.Run("file only", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"address": "filehost:1111", "store_interval": "7s"}`)
+		cfg := run(t, []string{"-c", path}, nil)
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 1111, cfg.Port)
+		assert.Equal(t, 7, cfg.StoreInterval)
+	})
+
+	t.Run("file overridden by flag", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"address": "filehost:1111", "store_interval": "7s"}`)
+		cfg := run(t, []string{"-c", path, "-i", "42"}, nil)
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 42, cfg.StoreInterval)
+	})
+
+	t.Run("file overridden by env", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"address": "filehost:1111", "store_interval": "7s"}`)
+		cfg := run(t, []string{"-c", path}, map[string]string{"STORE_INTERVAL": "99"})
+		assert.Equal(t, "filehost", cfg.Host)
+		assert.Equal(t, 99, cfg.StoreInterval)
+	})
+
+	t.Run("flag overridden by env: env wins", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"store_interval": "7s"}`)
+		cfg := run(t, []string{"-c", path, "-i", "42"}, map[string]string{"STORE_INTERVAL": "99"})
+		assert.Equal(t, 99, cfg.StoreInterval)
+	})
+
+	t.Run("absent keys keep default through full pipeline", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"store_interval": "7s"}`)
+		cfg := run(t, []string{"-c", path}, nil)
+		assert.Equal(t, host, cfg.Host)
+		assert.Equal(t, port, cfg.Port)
+		assert.Equal(t, restore, cfg.Restore)
+		assert.Equal(t, fileStoragePath, cfg.FileStoragePath)
+	})
+
+	t.Run("config path via CONFIG env", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"store_interval": "13s"}`)
+		cfg := run(t, nil, map[string]string{"CONFIG": path})
+		assert.Equal(t, 13, cfg.StoreInterval)
+	})
+
+	t.Run("crypto key from file survives validation", func(t *testing.T) {
+		path := writeJSONConfig(t, `{"crypto_key": "`+keyPath+`"}`)
+		cfg := run(t, []string{"-c", path}, nil)
+		assert.Equal(t, keyPath, cfg.CryptoKey)
+	})
+}
+
 func TestSetServerDefaults(t *testing.T) {
 	cfg := &ServerConfig{}
 	setServerDefaults(cfg)

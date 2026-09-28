@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	
+
 	dbcfg "github.com/AVZotov/metrics/internal/config/db"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	"github.com/caarlos0/env/v11"
@@ -44,6 +44,11 @@ type ServerConfig struct {
 func NewServerConfig() (*ServerConfig, error) {
 	conf := new(ServerConfig)
 	setServerDefaults(conf)
+	if path := discoverConfigPath(os.Args[1:]); path != "" {
+		if err := applyServerConfigFile(conf, path); err != nil {
+			return nil, err
+		}
+	}
 	if err := parseServerFlags(conf); err != nil {
 		return nil, err
 	}
@@ -81,20 +86,24 @@ func setServerDefaults(s *ServerConfig) {
 
 func parseServerFlags(config *ServerConfig) error {
 	flag.Var(&config.Address, "a", "address in form host:port")
-	flag.IntVar(&config.StoreInterval, "i", storeInterval, "metrics save interval in seconds")
-	flag.BoolVar(&config.Restore, "r", restore, "restore store on server restart")
-	flag.StringVar(&config.FileStoragePath, "f", fileStoragePath, "store path")
+	flag.IntVar(&config.StoreInterval, "i", config.StoreInterval, "metrics save interval in seconds")
+	flag.BoolVar(&config.Restore, "r", config.Restore, "restore store on server restart")
+	flag.StringVar(&config.FileStoragePath, "f", config.FileStoragePath, "store path")
 	flag.BoolVar(&config.EnablePprof, "enable-pprof", enablePprof, "mount /debug/pprof profiler endpoints")
-	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
-	flag.StringVar(&config.Key, "k", "", "signing key")
+	flag.StringVar(&config.DSN, "d", config.DSN, "database connection DSN")
+	flag.StringVar(&config.Key, "k", config.Key, "signing key")
 	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")
 	flag.StringVar(&config.Audit.URL, "audit-url", "", "URL to send audit events")
 	flag.StringVar(
-		&config.CryptoKey, "crypto-key", "", "path to RSA private key file for decrypting agent-to-server messages",
+		&config.CryptoKey, "crypto-key", config.CryptoKey,
+		"path to RSA private key file for decrypting agent-to-server messages",
 	)
-	
+	var configPath string
+	flag.StringVar(&configPath, "c", "", "path to JSON config file")
+	flag.StringVar(&configPath, "config", "", "path to JSON config file")
+
 	flag.Parse()
-	
+
 	flag.Visit(
 		func(f *flag.Flag) {
 			if f.Name == "d" {
@@ -102,7 +111,7 @@ func parseServerFlags(config *ServerConfig) error {
 			}
 		},
 	)
-	
+
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
@@ -160,7 +169,7 @@ func validateAuditURL(cfg *ServerConfig) error {
 	if cfg.Audit.URL == "" {
 		return nil
 	}
-	
+
 	parsed, err := url.Parse(cfg.Audit.URL)
 	if err != nil {
 		return fmt.Errorf("audit URL is invalid: %w", err)
@@ -168,7 +177,7 @@ func validateAuditURL(cfg *ServerConfig) error {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return errors.New("audit URL must be an absolute URL with scheme and host")
 	}
-	
+
 	return nil
 }
 
@@ -179,5 +188,59 @@ func validateCryptoKey(cfg *ServerConfig) error {
 	if _, err := os.Stat(cfg.CryptoKey); err != nil {
 		return apperrors.ErrCryptoKeyUnavailable
 	}
+	return nil
+}
+
+// serverFileConfig is the JSON shape of the server's config file. Fields
+// are pointers so a key absent from the file leaves the built-in default
+// untouched, which a zero-valued struct field couldn't distinguish from
+// an explicit zero/false/empty value.
+type serverFileConfig struct {
+	Address       *string `json:"address"`
+	Restore       *bool   `json:"restore"`
+	StoreInterval *string `json:"store_interval"`
+	StoreFile     *string `json:"store_file"`
+	DatabaseDSN   *string `json:"database_dsn"`
+	CryptoKey     *string `json:"crypto_key"`
+}
+
+// applyServerConfigFile reads the JSON config file at path and merges its
+// values into cfg as new defaults, to be called before parseServerFlags
+// so flag.Parse (and later env.Parse) can still override them. Only keys
+// present in the file are applied. A non-empty database_dsn sets DSNSet,
+// the same way the -d flag does; an empty one means "not configured",
+// like an absent key.
+func applyServerConfigFile(cfg *ServerConfig, path string) error {
+	var fc serverFileConfig
+	if err := readConfigFile(path, &fc); err != nil {
+		return err
+	}
+
+	if fc.Address != nil {
+		if err := cfg.Set(*fc.Address); err != nil {
+			return err
+		}
+	}
+	if fc.Restore != nil {
+		cfg.Restore = *fc.Restore
+	}
+	if fc.StoreInterval != nil {
+		secs, err := parseDurationSeconds(*fc.StoreInterval)
+		if err != nil {
+			return err
+		}
+		cfg.StoreInterval = secs
+	}
+	if fc.StoreFile != nil {
+		cfg.FileStoragePath = *fc.StoreFile
+	}
+	if fc.DatabaseDSN != nil && *fc.DatabaseDSN != "" {
+		cfg.DSN = *fc.DatabaseDSN
+		cfg.DSNSet = true
+	}
+	if fc.CryptoKey != nil {
+		cfg.CryptoKey = *fc.CryptoKey
+	}
+
 	return nil
 }

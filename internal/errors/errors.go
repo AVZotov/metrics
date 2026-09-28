@@ -51,6 +51,15 @@ var (
 	// ErrUnexpectedCipherLength means the encrypted data is shorter than the
 	// GCM nonce, so it can't possibly be valid ciphertext.
 	ErrUnexpectedCipherLength = errors.New("unexpected cipher length")
+	// ErrConfigFileUnavailable means -c/-config/CONFIG pointed at a config
+	// file that doesn't exist or can't be read.
+	ErrConfigFileUnavailable = errors.New("config file is unavailable")
+	// ErrConfigFileMalformed means the config file isn't valid JSON, or
+	// contains a key its target config doesn't recognize.
+	ErrConfigFileMalformed = errors.New("config file is malformed")
+	// ErrInvalidDuration means a config file duration value couldn't be
+	// parsed, or doesn't represent a whole, non-negative number of seconds.
+	ErrInvalidDuration = errors.New("invalid duration")
 )
 
 // RetryError reports the outcome of a retried operation, including every
