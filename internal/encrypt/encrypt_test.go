@@ -1,6 +1,8 @@
 package encrypt
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -193,4 +195,89 @@ func TestDecryptHybrid_TamperedCiphertextFailsAuthentication(t *testing.T) {
 	_, err = DecryptHybrid(key, encryptedKey, tampered)
 	assert.Error(t, err)
 	assert.NotErrorIs(t, err, appErr.ErrUnexpectedCipherLength)
+}
+
+func TestLoadPrivateKey_UnrecognizedBlockType(t *testing.T) {
+	path := writePEM(t, "EC PRIVATE KEY", []byte("irrelevant"))
+
+	_, err := LoadPrivateKey(path)
+	assert.ErrorIs(t, err, appErr.ErrUnexpectedKeyType)
+}
+
+func TestLoadPublicKey_UnrecognizedBlockType(t *testing.T) {
+	path := writePEM(t, "CERTIFICATE", []byte("irrelevant"))
+
+	_, err := LoadPublicKey(path)
+	assert.ErrorIs(t, err, appErr.ErrUnexpectedKeyType)
+}
+
+// TestLoadKey_CorruptedDER_PropagatesParseError verifies that when the PEM
+// block type is recognized but its bytes don't parse, the matching x509
+// parser's error is returned instead of being swallowed or replaced by
+// ErrUnexpectedKeyType.
+func TestLoadKey_CorruptedDER_PropagatesParseError(t *testing.T) {
+	corrupted := []byte("definitely not DER")
+
+	tests := []struct {
+		blockType string
+		load      func(path string) error
+		parse     func(der []byte) error
+	}{
+		{
+			blockType: "PRIVATE KEY",
+			load:      func(p string) error { _, err := LoadPrivateKey(p); return err },
+			parse:     func(d []byte) error { _, err := x509.ParsePKCS8PrivateKey(d); return err },
+		},
+		{
+			blockType: "RSA PRIVATE KEY",
+			load:      func(p string) error { _, err := LoadPrivateKey(p); return err },
+			parse:     func(d []byte) error { _, err := x509.ParsePKCS1PrivateKey(d); return err },
+		},
+		{
+			blockType: "PUBLIC KEY",
+			load:      func(p string) error { _, err := LoadPublicKey(p); return err },
+			parse:     func(d []byte) error { _, err := x509.ParsePKIXPublicKey(d); return err },
+		},
+		{
+			blockType: "RSA PUBLIC KEY",
+			load:      func(p string) error { _, err := LoadPublicKey(p); return err },
+			parse:     func(d []byte) error { _, err := x509.ParsePKCS1PublicKey(d); return err },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.blockType, func(t *testing.T) {
+				parseErr := tt.parse(corrupted)
+				require.Error(t, parseErr)
+
+				err := tt.load(writePEM(t, tt.blockType, corrupted))
+
+				require.Error(t, err)
+				assert.ErrorContains(t, err, parseErr.Error())
+				assert.NotErrorIs(t, err, appErr.ErrUnexpectedKeyType)
+			},
+		)
+	}
+}
+
+func TestLoadPrivateKey_NonRSAPKCS8Key(t *testing.T) {
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	require.NoError(t, err)
+	path := writePEM(t, "PRIVATE KEY", der)
+
+	_, err = LoadPrivateKey(path)
+	assert.ErrorIs(t, err, appErr.ErrUnexpectedKeyType)
+}
+
+func TestLoadPublicKey_NonRSAPKIXKey(t *testing.T) {
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKIXPublicKey(&ecKey.PublicKey)
+	require.NoError(t, err)
+	path := writePEM(t, "PUBLIC KEY", der)
+
+	_, err = LoadPublicKey(path)
+	assert.ErrorIs(t, err, appErr.ErrUnexpectedKeyType)
 }

@@ -140,8 +140,12 @@ func (d *FileStore) writeAll(metrics []*models.Metrics) (err error) {
 	}
 	tmpName := tmpFile.Name()
 
+	// Runs after the Close defer below, and only on failure: after a
+	// successful rename nothing is left at tmpName.
 	defer func() {
-		_ = os.Remove(tmpName)
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
 	}()
 	defer func() {
 		if closeErr := tmpFile.Close(); closeErr != nil {

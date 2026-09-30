@@ -2,7 +2,7 @@ package handler
 
 import (
 	"crypto/rsa"
-	
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
@@ -26,14 +26,14 @@ func register(mux *chi.Mux, h *Handler, logger *zap.Logger, key string, enablePp
 		mux.Mount("/debug", middleware.Profiler())
 	}
 	mux.Get("/ping", h.ping)
-	
+
 	mux.Group(
 		func(mux chi.Router) {
 			mux.Use(compressMiddleware(logger))
 			mux.Get("/", h.getAll)
 		},
 	)
-	
+
 	mux.Group(
 		func(mux chi.Router) {
 			mux.Use(signMiddleware(key))
@@ -42,9 +42,16 @@ func register(mux *chi.Mux, h *Handler, logger *zap.Logger, key string, enablePp
 			mux.Get("/value/{type}/{name}", h.getValue)
 		},
 	)
-	
+
 	mux.Group(
 		func(mux chi.Router) {
+			// Middleware order is required, not cosmetic: it must undo the
+			// agent's encoding in reverse. The agent sends
+			// sign(encrypt(gzip(json))), so the signature is checked over the
+			// raw encrypted bytes first, then the body is decrypted, and only
+			// then decompressed. Reordering these doesn't fail loudly: the
+			// requests just start getting 400s from whichever middleware
+			// receives bytes it can't read.
 			mux.Use(signMiddleware(key))
 			mux.Use(decryptMiddleware(privateKey, logger))
 			mux.Use(compressMiddleware(logger))
