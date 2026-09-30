@@ -25,10 +25,8 @@ var buildVersion string
 var buildDate string
 var buildCommit string
 
-// shutdownTimeout bounds how long the agent waits, on shutdown, for
-// in-flight and queued sends to finish, and is used as the context timeout
-// for any send issued after the signal context is cancelled (since the
-// cancelled ctx itself can no longer be used to bound a request).
+// shutdownTimeout bounds, on shutdown, how long an in-flight send may run
+// before it is cancelled, and separately bounds the final flush.
 const shutdownTimeout = 10 * time.Second
 
 func main() {
@@ -61,12 +59,20 @@ func run(logger *zap.Logger) error {
 	}
 	jobs := make(chan []models.Metrics, cfg.RateLimit)
 
+	// sendCtx bounds every report send. It is deliberately not derived from
+	// ctx: a send in flight when the signal arrives should run to completion,
+	// since aborting a request the server may already be applying makes the
+	// final flush deliver the same counter deltas again. It is cancelled
+	// only if draining overruns shutdownTimeout.
+	sendCtx, cancelSends := context.WithCancel(context.Background())
+	defer cancelSends()
+
 	var wg sync.WaitGroup
 	for i := uint(0); i < cfg.RateLimit; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			reportWorker(ctx, jobs, a, logger)
+			reportWorker(ctx, sendCtx, jobs, a, logger)
 		}()
 	}
 
@@ -85,18 +91,38 @@ func run(logger *zap.Logger) error {
 	}()
 
 	<-ctx.Done()
-	logger.Info("shutdown signal received, draining in-flight and queued work")
+	logger.Info("shutdown signal received, stopping agent loops")
 
-	if waitWithTimeout(&wg, shutdownTimeout) {
-		logger.Info("all agent loops stopped cleanly")
-	} else {
-		logger.Warn("shutdown timeout expired before all agent loops stopped")
-	}
+	stopWorkers(&wg, cancelSends, shutdownTimeout, logger)
 
 	flushPending(a, logger)
 
 	logger.Info("agent shut down")
 	return nil
+}
+
+// stopWorkers waits up to timeout for all agent goroutines to finish. If
+// that expires, it cancels in-flight sends via cancelSends and then waits
+// for the goroutines to actually return, so the caller can flush the
+// agent's snapshot without a worker still delivering the same counter
+// deltas. The second wait is short: cancelling aborts both a pending retry
+// backoff and an in-flight request.
+//
+// Known limitation: a request cancelled here may already be applied by the
+// server (it doesn't stop processing when the client goes away), and since
+// the agent never saw it confirmed, the final flush resends its deltas and
+// they are counted twice. This needs the server to still be processing a
+// request after the full timeout; closing it for good would require
+// server-side deduplication of batches.
+func stopWorkers(wg *sync.WaitGroup, cancelSends context.CancelFunc, timeout time.Duration, logger *zap.Logger) {
+	if waitWithTimeout(wg, timeout) {
+		logger.Info("all agent loops stopped cleanly")
+		return
+	}
+	logger.Warn("shutdown timeout expired, cancelling in-flight sends")
+	cancelSends()
+	wg.Wait()
+	logger.Info("all agent loops stopped after cancellation")
 }
 
 // waitWithTimeout waits for wg to finish, returning false if timeout
@@ -120,7 +146,9 @@ func waitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 
 // flushPending sends the agent's remaining unsent snapshot after all
 // collect/report loops have stopped, so metrics collected since the last
-// report tick aren't lost on shutdown.
+// report tick, and any queued or aborted report, aren't lost on shutdown.
+// Unacked counter deltas stay in the agent, so the snapshot already covers
+// every report that was never confirmed delivered.
 func flushPending(a *agent.Agent, logger *zap.Logger) {
 	metrics := a.Snapshot()
 	if len(metrics) == 0 {
@@ -166,12 +194,7 @@ func gopsutilLoop(ctx context.Context, a *agent.Agent, logger *zap.Logger, durat
 	}
 }
 
-// reportLoop is the sole closer of jobs: closing it here, rather than in
-// reportWorker, lets workers safely range over jobs until every queued
-// send has been drained instead of abandoning them the moment ctx is
-// cancelled.
 func reportLoop(ctx context.Context, a *agent.Agent, jobs chan<- []models.Metrics, duration time.Duration) {
-	defer close(jobs)
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 	for {
@@ -192,27 +215,28 @@ func reportLoop(ctx context.Context, a *agent.Agent, jobs chan<- []models.Metric
 	}
 }
 
-func reportWorker(ctx context.Context, jobs <-chan []models.Metrics, a *agent.Agent, logger *zap.Logger) {
-	for metrics := range jobs {
-		if err := sendMetrics(ctx, a, metrics); err != nil {
-			logReportError(logger, err)
-			continue
+// reportWorker sends queued snapshots with sendCtx until ctx is cancelled.
+// A send already in progress when ctx is cancelled is finished, not
+// aborted. Queued jobs are abandoned rather than drained: their counter
+// deltas were never acked, so the final flush delivers them anyway.
+func reportWorker(ctx, sendCtx context.Context, jobs <-chan []models.Metrics, a *agent.Agent, logger *zap.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case metrics := <-jobs:
+			// select picks randomly when both cases are ready; don't start a
+			// new send once shutdown has begun.
+			if ctx.Err() != nil {
+				return
+			}
+			if err := a.SendWithRetry(sendCtx, metrics); err != nil {
+				logReportError(logger, err)
+				continue
+			}
+			a.AckSent(metrics)
 		}
-		a.AckSent(metrics)
 	}
-}
-
-// sendMetrics sends metrics using ctx during normal operation. Once ctx is
-// cancelled, SendWithRetry's retry loop would abort immediately against
-// it, so shutdown-time sends fall back to a fresh context bounded by
-// shutdownTimeout, giving queued jobs a real chance to be delivered.
-func sendMetrics(ctx context.Context, a *agent.Agent, metrics []models.Metrics) error {
-	if ctx.Err() != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		return a.SendWithRetry(shutdownCtx, metrics)
-	}
-	return a.SendWithRetry(ctx, metrics)
 }
 
 func logReportError(logger *zap.Logger, err error) {

@@ -8,13 +8,16 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
+	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -407,4 +410,57 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 			assert.Equal(t, tt.want, a.counter["PollCount"])
 		}()
 	}
+}
+
+// TestAgent_SendWithRetry_CancelAbortsInFlightRequest verifies that
+// cancelling ctx aborts a request the server never answers, instead of
+// leaving SendWithRetry blocked on it.
+func TestAgent_SendWithRetry_CancelAbortsInFlightRequest(t *testing.T) {
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				once.Do(func() { close(arrived) })
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			},
+		),
+	)
+	defer server.Close()
+	defer close(release)
+
+	a, err := NewAgent(&http.Client{}, server.URL, "", "")
+	require.NoError(t, err)
+	a.Collect()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.SendWithRetry(ctx, a.Snapshot())
+	}()
+
+	select {
+	case <-arrived:
+	case <-time.After(time.Second):
+		t.Fatal("request never reached the server")
+	}
+	cancel()
+
+	select {
+	case err = <-errCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("SendWithRetry did not return after ctx was cancelled")
+	}
+
+	retryErr, ok := errors.AsType[*apperrors.RetryError](err)
+	require.True(t, ok, "expected *RetryError, got %v", err)
+	assert.False(t, retryErr.Succeeded)
+	require.NotEmpty(t, retryErr.Attempts)
+	assert.ErrorIs(t, retryErr.Attempts[0], context.Canceled)
 }

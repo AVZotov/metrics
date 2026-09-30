@@ -145,13 +145,14 @@ func (a *Agent) Snapshot() []models.Metrics {
 }
 
 // SendWithRetry sends metrics to the server, retrying on recoverable errors
-// (network failures, 5xx responses) until ctx is done. Returns an error if
-// all retries are exhausted or the failure is non-recoverable.
+// (network failures, 5xx responses) until ctx is done. Cancelling ctx also
+// aborts an in-flight request. Returns an error if all retries are
+// exhausted or the failure is non-recoverable.
 func (a *Agent) SendWithRetry(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	if err := a.sendMetricsJSON(metrics); err != nil {
+	if err := a.sendMetricsJSON(ctx, metrics); err != nil {
 		return a.retryReport(ctx, metrics, err)
 	}
 
@@ -216,7 +217,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	return nil
 }
 
-func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
+func (a *Agent) sendMetricsJSON(ctx context.Context, metrics []models.Metrics) error {
 	url := fmt.Sprintf("%s/updates/", a.baseURL)
 	buf := bytes.NewBuffer(nil)
 	gz := gzip.NewWriter(buf)
@@ -237,7 +238,7 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 		}
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
@@ -279,7 +280,7 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 		case <-time.After(delay):
 		}
 
-		err := a.sendMetricsJSON(metrics)
+		err := a.sendMetricsJSON(ctx, metrics)
 		if err == nil {
 			return &apperrors.RetryError{Succeeded: true, Attempts: attempts}
 		}
