@@ -264,3 +264,36 @@ func TestFileStore_ConcurrentSaveAll(t *testing.T) {
 	require.NoError(t, err, "file should be valid JSON, not corrupted by interleaved writes")
 	require.Len(t, all, 1, "SaveAll always overwrites, so exactly one goroutine's write should be the final state")
 }
+
+// TestFileStore_SaveAll_LeavesNoTempFile verifies a successful write
+// renames its temp file into place rather than leaving it behind.
+func TestFileStore_SaveAll_LeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+
+	require.NoError(t, ds.SaveAll([]*models.Metrics{{ID: "g", MType: models.Gauge, Value: gaugePtr(1)}}))
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "metrics.json", entries[0].Name())
+}
+
+// TestFileStore_SaveAll_RenameFails_RemovesTempFile verifies the temp file
+// is cleaned up when the final rename fails. A non-empty directory at the
+// store's path makes the rename fail.
+func TestFileStore_SaveAll_RenameFails_RemovesTempFile(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewFileStore("metrics.json", dir)
+	require.NoError(t, err)
+	blocker := filepath.Join(dir, "metrics.json")
+	require.NoError(t, os.MkdirAll(filepath.Join(blocker, "sub"), 0o755))
+
+	err = ds.SaveAll([]*models.Metrics{{ID: "g", MType: models.Gauge, Value: gaugePtr(1)}})
+	require.Error(t, err)
+
+	temps, err := filepath.Glob(filepath.Join(dir, "temp-*"))
+	require.NoError(t, err)
+	assert.Empty(t, temps, "temp file should be removed after a failed write")
+}

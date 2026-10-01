@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AVZotov/metrics/internal/encrypt"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/sign"
@@ -29,21 +31,34 @@ type Agent struct {
 	gauge   map[string]float64
 	counter map[string]int64
 	key     string
+	pubKey  *rsa.PublicKey
 	cpuWarm sync.Once
 }
 
 // NewAgent creates an Agent that sends metrics to baseURL using client.
-// If key is non-empty, outgoing requests are signed with it.
-func NewAgent(client *http.Client, baseURL string, key string) *Agent {
+// If key is non-empty, outgoing requests are signed with it. If
+// cryptoKeyPath is non-empty, it's loaded as an RSA public key and outgoing
+// bodies are hybrid-encrypted with it; returns an error if the key can't be
+// loaded.
+func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string) (*Agent, error) {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
-	return &Agent{
+	a := &Agent{
 		client:  client,
 		baseURL: baseURL,
 		gauge:   gauge,
 		counter: counter,
 		key:     key,
 	}
+	if cryptoKeyPath != "" {
+		pubKey, err := encrypt.LoadPublicKey(cryptoKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		a.pubKey = pubKey
+	}
+
+	return a, nil
 }
 
 // Collect reads runtime.MemStats and updates the agent's gauge and counter values.
@@ -90,9 +105,11 @@ func (a *Agent) Collect() {
 // its first real measurement needs a baseline to compare against.
 // Returns an error if reading memory or CPU stats fails.
 func (a *Agent) CollectGopsutil() error {
-	a.cpuWarm.Do(func() {
-		_, _ = cpu.Percent(0, true)
-	})
+	a.cpuWarm.Do(
+		func() {
+			_, _ = cpu.Percent(0, true)
+		},
+	)
 
 	vm, err := mem.VirtualMemory()
 	if err != nil {
@@ -128,13 +145,14 @@ func (a *Agent) Snapshot() []models.Metrics {
 }
 
 // SendWithRetry sends metrics to the server, retrying on recoverable errors
-// (network failures, 5xx responses) until ctx is done. Returns an error if
-// all retries are exhausted or the failure is non-recoverable.
+// (network failures, 5xx responses) until ctx is done. Cancelling ctx also
+// aborts an in-flight request. Returns an error if all retries are
+// exhausted or the failure is non-recoverable.
 func (a *Agent) SendWithRetry(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	if err := a.sendMetricsJSON(metrics); err != nil {
+	if err := a.sendMetricsJSON(ctx, metrics); err != nil {
 		return a.retryReport(ctx, metrics, err)
 	}
 
@@ -199,7 +217,7 @@ func (a *Agent) sendMetricJSON(metricType, name, value string) error {
 	return nil
 }
 
-func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
+func (a *Agent) sendMetricsJSON(ctx context.Context, metrics []models.Metrics) error {
 	url := fmt.Sprintf("%s/updates/", a.baseURL)
 	buf := bytes.NewBuffer(nil)
 	gz := gzip.NewWriter(buf)
@@ -210,15 +228,28 @@ func (a *Agent) sendMetricsJSON(metrics []models.Metrics) error {
 		return fmt.Errorf("could not close gzip writer: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, buf)
+	body := buf.Bytes()
+	var encryptedKeyHeader string
+	if a.pubKey != nil {
+		var err error
+		body, encryptedKeyHeader, err = encrypt.EncryptHybrid(a.pubKey, body)
+		if err != nil {
+			return err
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
+	if encryptedKeyHeader != "" {
+		req.Header.Set("X-Crypto-Key", encryptedKeyHeader)
+	}
 
 	if a.key != "" {
-		signature := sign.Sign(buf.Bytes(), a.key)
+		signature := sign.Sign(body, a.key)
 		req.Header.Set("HashSHA256", signature)
 	}
 
@@ -249,7 +280,7 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 		case <-time.After(delay):
 		}
 
-		err := a.sendMetricsJSON(metrics)
+		err := a.sendMetricsJSON(ctx, metrics)
 		if err == nil {
 			return &apperrors.RetryError{Succeeded: true, Attempts: attempts}
 		}

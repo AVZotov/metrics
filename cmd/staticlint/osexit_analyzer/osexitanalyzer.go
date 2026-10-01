@@ -8,8 +8,9 @@ package osexitanalyzer
 
 import (
 	"go/ast"
+	"go/types"
 	"strings"
-
+	
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -26,11 +27,11 @@ func run(pass *analysis.Pass) (any, error) {
 	if pass.Pkg.Name() != "main" {
 		return nil, nil
 	}
-
+	
 	if strings.HasSuffix(pass.Pkg.Path(), ".test") {
 		return nil, nil
 	}
-
+	
 	for _, file := range pass.Files {
 		for _, decl := range file.Decls {
 			if funcDecl, ok := decl.(*ast.FuncDecl); ok {
@@ -41,13 +42,13 @@ func run(pass *analysis.Pass) (any, error) {
 							if !ok {
 								return true
 							}
-							if isOsExitCall(call) {
+							if isOsExitCall(pass, call) {
 								pass.Reportf(
 									call.Pos(),
 									"direct call to os.Exit is not allowed in main function of package main",
 								)
 							}
-
+							
 							return true
 						},
 					)
@@ -55,20 +56,25 @@ func run(pass *analysis.Pass) (any, error) {
 			}
 		}
 	}
-
+	
 	return nil, nil
 }
 
-func isOsExitCall(call *ast.CallExpr) bool {
+func isOsExitCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
-
+	
 	ident, ok := sel.X.(*ast.Ident)
-	if !ok || ident.Name != "os" {
+	if !ok {
 		return false
 	}
-
-	return sel.Sel.Name == "Exit"
+	
+	o := pass.TypesInfo.Uses[ident]
+	pkg, ok := o.(*types.PkgName)
+	if !ok {
+		return false
+	}
+	return pkg.Imported().Path() == "os" && sel.Sel.Name == "Exit"
 }

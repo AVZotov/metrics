@@ -30,3 +30,9 @@ data/
 .claude/
 CLAUDE.md
 /staticlint
+/agent
+/server
+/reset
+
+# Internal RSA keys
+keys/

@@ -33,6 +33,9 @@ type ServerConfig struct {
 	DB                  dbcfg.Config
 	Key                 string `env:"KEY"`
 	Audit               AuditConfig
+	// CryptoKey is the path to an RSA private key PEM file used to decrypt
+	// agent-to-server payloads. Empty disables decryption.
+	CryptoKey string `env:"CRYPTO_KEY"`
 }
 
 // NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
@@ -41,6 +44,11 @@ type ServerConfig struct {
 func NewServerConfig() (*ServerConfig, error) {
 	conf := new(ServerConfig)
 	setServerDefaults(conf)
+	if path := discoverConfigPath(os.Args[1:]); path != "" {
+		if err := applyServerConfigFile(conf, path); err != nil {
+			return nil, err
+		}
+	}
 	if err := parseServerFlags(conf); err != nil {
 		return nil, err
 	}
@@ -59,6 +67,9 @@ func NewServerConfig() (*ServerConfig, error) {
 	if err := validateAuditURL(conf); err != nil {
 		return nil, err
 	}
+	if err := validateCryptoKey(conf); err != nil {
+		return nil, err
+	}
 	return conf, nil
 }
 
@@ -75,14 +86,21 @@ func setServerDefaults(s *ServerConfig) {
 
 func parseServerFlags(config *ServerConfig) error {
 	flag.Var(&config.Address, "a", "address in form host:port")
-	flag.IntVar(&config.StoreInterval, "i", storeInterval, "metrics save interval in seconds")
-	flag.BoolVar(&config.Restore, "r", restore, "restore store on server restart")
-	flag.StringVar(&config.FileStoragePath, "f", fileStoragePath, "store path")
+	flag.IntVar(&config.StoreInterval, "i", config.StoreInterval, "metrics save interval in seconds")
+	flag.BoolVar(&config.Restore, "r", config.Restore, "restore store on server restart")
+	flag.StringVar(&config.FileStoragePath, "f", config.FileStoragePath, "store path")
 	flag.BoolVar(&config.EnablePprof, "enable-pprof", enablePprof, "mount /debug/pprof profiler endpoints")
-	flag.StringVar(&config.DSN, "d", "", "database connection DSN")
-	flag.StringVar(&config.Key, "k", "", "signing key")
+	flag.StringVar(&config.DSN, "d", config.DSN, "database connection DSN")
+	flag.StringVar(&config.Key, "k", config.Key, "signing key")
 	flag.StringVar(&config.Audit.File, "audit-file", "", "path to audit log file")
 	flag.StringVar(&config.Audit.URL, "audit-url", "", "URL to send audit events")
+	flag.StringVar(
+		&config.CryptoKey, "crypto-key", config.CryptoKey,
+		"path to RSA private key file for decrypting agent-to-server messages",
+	)
+	var configPath string
+	flag.StringVar(&configPath, "c", "", "path to JSON config file")
+	flag.StringVar(&configPath, "config", "", "path to JSON config file")
 
 	flag.Parse()
 
@@ -158,6 +176,70 @@ func validateAuditURL(cfg *ServerConfig) error {
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return errors.New("audit URL must be an absolute URL with scheme and host")
+	}
+
+	return nil
+}
+
+func validateCryptoKey(cfg *ServerConfig) error {
+	if cfg.CryptoKey == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.CryptoKey); err != nil {
+		return apperrors.ErrCryptoKeyUnavailable
+	}
+	return nil
+}
+
+// serverFileConfig is the JSON shape of the server's config file. Fields
+// are pointers so a key absent from the file leaves the built-in default
+// untouched, which a zero-valued struct field couldn't distinguish from
+// an explicit zero/false/empty value.
+type serverFileConfig struct {
+	Address       *string `json:"address"`
+	Restore       *bool   `json:"restore"`
+	StoreInterval *string `json:"store_interval"`
+	StoreFile     *string `json:"store_file"`
+	DatabaseDSN   *string `json:"database_dsn"`
+	CryptoKey     *string `json:"crypto_key"`
+}
+
+// applyServerConfigFile reads the JSON config file at path and merges its
+// values into cfg as new defaults, to be called before parseServerFlags
+// so flag.Parse (and later env.Parse) can still override them. Only keys
+// present in the file are applied. A non-empty database_dsn sets DSNSet,
+// the same way the -d flag does; an empty one means "not configured",
+// like an absent key.
+func applyServerConfigFile(cfg *ServerConfig, path string) error {
+	var fc serverFileConfig
+	if err := readConfigFile(path, &fc); err != nil {
+		return err
+	}
+
+	if fc.Address != nil {
+		if err := cfg.Set(*fc.Address); err != nil {
+			return err
+		}
+	}
+	if fc.Restore != nil {
+		cfg.Restore = *fc.Restore
+	}
+	if fc.StoreInterval != nil {
+		secs, err := parseDurationSeconds(*fc.StoreInterval)
+		if err != nil {
+			return err
+		}
+		cfg.StoreInterval = secs
+	}
+	if fc.StoreFile != nil {
+		cfg.FileStoragePath = *fc.StoreFile
+	}
+	if fc.DatabaseDSN != nil && *fc.DatabaseDSN != "" {
+		cfg.DSN = *fc.DatabaseDSN
+		cfg.DSNSet = true
+	}
+	if fc.CryptoKey != nil {
+		cfg.CryptoKey = *fc.CryptoKey
 	}
 
 	return nil
