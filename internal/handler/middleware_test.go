@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
-
+	
 	"github.com/AVZotov/metrics/internal/sign"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +84,81 @@ func BenchmarkSignMiddleware(b *testing.B) {
 						handler.ServeHTTP(rec, req)
 					}
 				}
+			},
+		)
+	}
+}
+
+func TestTrustedSubnetMiddleware(t *testing.T) {
+	tests := []struct {
+		name          string
+		trustedSubnet netip.Prefix
+		realIP        string
+		wantCode      int
+		wantCalled    bool
+	}{
+		{
+			name:          "request from trusted subnet should pass",
+			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
+			realIP:        "192.168.0.5",
+			wantCode:      http.StatusOK,
+			wantCalled:    true,
+		},
+		{
+			name:          "trusted subnet not specified on server request should pass",
+			trustedSubnet: netip.Prefix{},
+			realIP:        "192.168.0.5",
+			wantCode:      http.StatusOK,
+			wantCalled:    true,
+		},
+		{
+			name:          "empty header request should fail",
+			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
+			realIP:        "",
+			wantCode:      http.StatusForbidden,
+			wantCalled:    false,
+		},
+		{
+			name:          "garbage header in request should fail",
+			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
+			realIP:        "garbage",
+			wantCode:      http.StatusForbidden,
+			wantCalled:    false,
+		},
+		{
+			name:          "request ip not in trusted subnet request should fail",
+			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
+			realIP:        "192.168.1.1",
+			wantCode:      http.StatusForbidden,
+			wantCalled:    false,
+		},
+		{
+			name:          "request ip wrapped to IPv6 and in trusted subnet range request should pass",
+			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
+			realIP:        "::ffff:192.168.0.5",
+			wantCode:      http.StatusOK,
+			wantCalled:    true,
+		},
+	}
+	logger := zap.NewNop()
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				called := false
+				next := http.HandlerFunc(
+					func(w http.ResponseWriter, r *http.Request) {
+						called = true
+						w.WriteHeader(http.StatusOK)
+					},
+				)
+				req := httptest.NewRequest(http.MethodPost, "/update", nil)
+				if tt.realIP != "" {
+					req.Header.Set("X-Real-IP", tt.realIP)
+				}
+				rec := httptest.NewRecorder()
+				trustedSubnetMiddleware(tt.trustedSubnet, logger)(next).ServeHTTP(rec, req)
+				assert.Equal(t, tt.wantCode, rec.Code)
+				assert.Equal(t, tt.wantCalled, called)
 			},
 		)
 	}

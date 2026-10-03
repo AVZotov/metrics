@@ -7,9 +7,10 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
-
+	
 	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
@@ -186,9 +187,9 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-
+				
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
+				
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err != nil {
 					sw.WriteHeader(http.StatusBadRequest)
@@ -196,14 +197,14 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
+				
 				signature := r.Header.Get("HashSHA256")
 				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
 				}
-
+				
 				next.ServeHTTP(sw, r)
 				finalizeSignedResponse(w, sw, key)
 			},
@@ -244,7 +245,41 @@ func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewReader(plaintext))
+				
+				next.ServeHTTP(w, r)
+			},
+		)
+	}
+}
 
+func trustedSubnetMiddleware(subnet netip.Prefix, logger *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				if !subnet.IsValid() {
+					next.ServeHTTP(w, r)
+					return
+				}
+				rawIP := r.Header.Get("X-Real-IP")
+				if rawIP == "" {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					logger.Warn("no IP header found")
+					return
+				}
+				ip, err := netip.ParseAddr(rawIP)
+				if err != nil {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					logger.Warn("invalid IP address", zap.String("ip", rawIP), zap.Error(err))
+					return
+				}
+				
+				cleanIP := ip.Unmap()
+				
+				if !subnet.Contains(cleanIP) {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					logger.Warn("IP address not in subnet", zap.String("ip", rawIP))
+					return
+				}
 				next.ServeHTTP(w, r)
 			},
 		)
