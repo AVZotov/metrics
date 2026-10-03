@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -36,11 +37,16 @@ type ServerConfig struct {
 	// CryptoKey is the path to an RSA private key PEM file used to decrypt
 	// agent-to-server payloads. Empty disables decryption.
 	CryptoKey string `env:"CRYPTO_KEY"`
+	// TrustedSubnet is the CIDR that agent IPs must belong to. The zero
+	// value (IsValid() == false) means it wasn't configured and requests
+	// aren't restricted by source IP.
+	TrustedSubnet netip.Prefix `env:"TRUSTED_SUBNET"`
 }
 
 // NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
 // Returns an error if flag parsing fails, the DSN is explicitly set but
-// empty, or the audit file path or audit URL is invalid.
+// empty, the audit file path or audit URL is invalid, or the trusted
+// subnet isn't a valid CIDR.
 func NewServerConfig() (*ServerConfig, error) {
 	conf := new(ServerConfig)
 	setServerDefaults(conf)
@@ -97,6 +103,10 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.StringVar(
 		&config.CryptoKey, "crypto-key", config.CryptoKey,
 		"path to RSA private key file for decrypting agent-to-server messages",
+	)
+	flag.TextVar(
+		&config.TrustedSubnet, "t", config.TrustedSubnet,
+		"trusted agent subnet in CIDR notation; empty disables the check",
 	)
 	var configPath string
 	flag.StringVar(&configPath, "c", "", "path to JSON config file")
@@ -202,6 +212,7 @@ type serverFileConfig struct {
 	StoreFile     *string `json:"store_file"`
 	DatabaseDSN   *string `json:"database_dsn"`
 	CryptoKey     *string `json:"crypto_key"`
+	TrustedSubnet *string `json:"trusted_subnet"`
 }
 
 // applyServerConfigFile reads the JSON config file at path and merges its
@@ -240,6 +251,11 @@ func applyServerConfigFile(cfg *ServerConfig, path string) error {
 	}
 	if fc.CryptoKey != nil {
 		cfg.CryptoKey = *fc.CryptoKey
+	}
+	if fc.TrustedSubnet != nil {
+		if err := cfg.TrustedSubnet.UnmarshalText([]byte(*fc.TrustedSubnet)); err != nil {
+			return fmt.Errorf("trusted_subnet: %w", err)
+		}
 	}
 
 	return nil
