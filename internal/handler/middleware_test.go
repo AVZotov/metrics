@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"testing"
-	
+
 	"github.com/AVZotov/metrics/internal/sign"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"

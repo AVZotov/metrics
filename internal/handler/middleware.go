@@ -10,7 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"time"
-	
+
 	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
@@ -187,9 +187,9 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-				
+
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-				
+
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err != nil {
 					sw.WriteHeader(http.StatusBadRequest)
@@ -197,14 +197,14 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-				
+
 				signature := r.Header.Get("HashSHA256")
 				if signature != "" && !sign.Verify(bodyBytes, key, signature) {
 					sw.WriteHeader(http.StatusBadRequest)
 					finalizeSignedResponse(w, sw, key)
 					return
 				}
-				
+
 				next.ServeHTTP(sw, r)
 				finalizeSignedResponse(w, sw, key)
 			},
@@ -245,7 +245,7 @@ func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewReader(plaintext))
-				
+
 				next.ServeHTTP(w, r)
 			},
 		)
@@ -272,9 +272,9 @@ func trustedSubnetMiddleware(subnet netip.Prefix, logger *zap.Logger) func(http.
 					logger.Warn("invalid IP address", zap.String("ip", rawIP), zap.Error(err))
 					return
 				}
-				
+
 				cleanIP := ip.Unmap()
-				
+
 				if !subnet.Contains(cleanIP) {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					logger.Warn("IP address not in subnet", zap.String("ip", rawIP))
