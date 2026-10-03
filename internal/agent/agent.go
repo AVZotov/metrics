@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/netip"
 	"runtime"
 	"strconv"
 	"sync"
@@ -32,6 +33,7 @@ type Agent struct {
 	counter map[string]int64
 	key     string
 	pubKey  *rsa.PublicKey
+	realIP  netip.Addr
 	cpuWarm sync.Once
 }
 
@@ -39,8 +41,9 @@ type Agent struct {
 // If key is non-empty, outgoing requests are signed with it. If
 // cryptoKeyPath is non-empty, it's loaded as an RSA public key and outgoing
 // bodies are hybrid-encrypted with it; returns an error if the key can't be
-// loaded.
-func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string) (*Agent, error) {
+// loaded. If realIP is valid, it's sent in the X-Real-IP header of every
+// metrics request; the zero netip.Addr omits the header.
+func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string, realIP netip.Addr) (*Agent, error) {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
 	a := &Agent{
@@ -49,6 +52,7 @@ func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string) (*Agent, 
 		gauge:   gauge,
 		counter: counter,
 		key:     key,
+		realIP:  realIP,
 	}
 	if cryptoKeyPath != "" {
 		pubKey, err := encrypt.LoadPublicKey(cryptoKeyPath)
@@ -246,6 +250,9 @@ func (a *Agent) sendMetricsJSON(ctx context.Context, metrics []models.Metrics) e
 	req.Header.Set("Content-Encoding", "gzip")
 	if encryptedKeyHeader != "" {
 		req.Header.Set("X-Crypto-Key", encryptedKeyHeader)
+	}
+	if a.realIP.IsValid() {
+		req.Header.Set("X-Real-IP", a.realIP.String())
 	}
 
 	if a.key != "" {

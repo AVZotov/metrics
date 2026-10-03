@@ -52,8 +52,17 @@ func run(logger *zap.Logger) error {
 		return err
 	}
 	client := &http.Client{}
-	baseURL := fmt.Sprintf("http://%s", cfg.String())
-	a, err := agent.NewAgent(client, baseURL, cfg.Key, cfg.CryptoKey)
+	serverAddr := cfg.String()
+	baseURL := fmt.Sprintf("http://%s", serverAddr)
+	// The agent can't know whether the server enforces a trusted subnet, so
+	// a failure here only drops the X-Real-IP header instead of exiting.
+	realIP, err := agent.HostIP(serverAddr)
+	if err != nil {
+		logger.Warn("could not determine host IP, X-Real-IP header disabled", zap.Error(err))
+	} else {
+		logger.Info("determined host IP for X-Real-IP header", zap.String("ip", realIP.String()))
+	}
+	a, err := agent.NewAgent(client, baseURL, cfg.Key, cfg.CryptoKey, realIP)
 	if err != nil {
 		return err
 	}
