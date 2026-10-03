@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -69,7 +71,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger, "", false, nil)
+	return NewRouter(h, logger, RouterOptions{})
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -81,13 +83,13 @@ func setupRouter(t *testing.T) chi.Router {
 	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger, "", false, nil)
+	return NewRouter(h, logger, RouterOptions{})
 }
 
 func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", false, nil)
+	router := NewRouter(h, logger, RouterOptions{})
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
@@ -99,13 +101,102 @@ func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 func TestNewRouter_PprofEnabled(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", true, nil)
+	router := NewRouter(h, logger, RouterOptions{EnablePprof: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestNewRouter_TrustedSubnet checks that a configured trusted subnet
+// guards only the metric write endpoints: writes from outside it get 403
+// before reaching the service, while reads and public endpoints stay open.
+func TestNewRouter_TrustedSubnet(t *testing.T) {
+	const (
+		trustedIP   = "192.168.1.10"
+		untrustedIP = "10.0.0.1"
+	)
+
+	routes := []struct {
+		method      string
+		path        string
+		body        string
+		contentType string
+		write       bool
+	}{
+		{method: http.MethodPost, path: "/update/gauge/g/1.5", contentType: "text/plain", write: true},
+		{method: http.MethodPost, path: "/update", body: `{"id":"g","type":"gauge","value":1.5}`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/update/", body: `{"id":"g","type":"gauge","value":1.5}`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/updates", body: `[{"id":"g","type":"gauge","value":1.5}]`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/updates/", body: `[{"id":"g","type":"gauge","value":1.5}]`, contentType: "application/json", write: true},
+		{method: http.MethodGet, path: "/value/gauge/g"},
+		{method: http.MethodPost, path: "/value", body: `{"id":"g","type":"gauge"}`, contentType: "application/json"},
+		{method: http.MethodPost, path: "/value/", body: `{"id":"g","type":"gauge"}`, contentType: "application/json"},
+		{method: http.MethodGet, path: "/ping"},
+		{method: http.MethodGet, path: "/"},
+	}
+
+	newRouter := func(t *testing.T) (chi.Router, *int) {
+		t.Helper()
+		writes := 0
+		value := 1.5
+		svc := &mockService{
+			updateFn: func(_, _, _ string) error {
+				writes++
+				return nil
+			},
+			updateMetricsFn: func([]models.Metrics) error {
+				writes++
+				return nil
+			},
+			getFn: func(id, mType string) (*models.Metrics, error) {
+				return &models.Metrics{ID: id, MType: mType, Value: &value}, nil
+			},
+		}
+		h := New(svc, zap.NewNop())
+		opts := RouterOptions{TrustedSubnet: netip.MustParsePrefix("192.168.1.0/24")}
+		return NewRouter(h, zap.NewNop(), opts), &writes
+	}
+
+	serve := func(router chi.Router, method, path, body, contentType, realIP string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		if realIP != "" {
+			req.Header.Set("X-Real-IP", realIP)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for _, rt := range routes {
+		name := rt.method + " " + rt.path
+		for _, realIP := range []string{"", untrustedIP} {
+			t.Run(name+" from untrusted IP "+strconv.Quote(realIP), func(t *testing.T) {
+				router, writes := newRouter(t)
+				code := serve(router, rt.method, rt.path, rt.body, rt.contentType, realIP)
+				if rt.write {
+					assert.Equal(t, http.StatusForbidden, code)
+					assert.Zero(t, *writes, "service must not be called for a forbidden write")
+					return
+				}
+				assert.Equal(t, http.StatusOK, code)
+			})
+		}
+
+		t.Run(name+" from trusted IP", func(t *testing.T) {
+			router, writes := newRouter(t)
+			code := serve(router, rt.method, rt.path, rt.body, rt.contentType, trustedIP)
+			assert.Equal(t, http.StatusOK, code)
+			if rt.write {
+				assert.Equal(t, 1, *writes)
+			}
+		})
+	}
 }
 
 func TestHandler_update_Counter(t *testing.T) {
