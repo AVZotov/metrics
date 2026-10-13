@@ -103,7 +103,10 @@ func run() error {
 			return fmt.Errorf("listen gRPC on %s: %w", cfg.GRPCAddress, listenErr)
 		}
 		grpcServer = grpc.NewServer(
-			grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(cfg.TrustedSubnet, logger)),
+			grpc.ChainUnaryInterceptor(
+				grpcserver.RecoveryInterceptor(logger),
+				grpcserver.TrustedSubnetInterceptor(cfg.TrustedSubnet, logger),
+			),
 		)
 		pb.RegisterMetricsServer(grpcServer, grpcserver.NewServer(s, logger))
 		go func() {

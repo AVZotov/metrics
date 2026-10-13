@@ -11,6 +11,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RecoveryInterceptor turns a panic in any later interceptor or handler into
+// codes.Internal and logs it with the stack, so one bad call can't crash the
+// server. Install it first in the chain so it wraps everything after it.
+func RecoveryInterceptor(logger *zap.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error(
+					"panic in gRPC handler",
+					zap.String("method", info.FullMethod),
+					zap.Any("panic", r),
+					zap.Stack("stack"),
+				)
+				err = status.Error(codes.Internal, "internal error")
+			}
+		}()
+		return handler(ctx, req)
+	}
+}
+
 // TrustedSubnetInterceptor rejects calls whose x-real-ip metadata is missing,
 // unparsable or outside subnet with codes.PermissionDenied. The zero subnet
 // (IsValid() == false) disables the check and lets every call pass through.
