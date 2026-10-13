@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,7 +42,7 @@ func TestReportWorker_QueuedJobAfterCancel_NotSent(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 
@@ -86,7 +85,7 @@ func TestFlushPending_SendsPendingSnapshotAndAcks(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 
@@ -113,7 +112,7 @@ func TestFlushPending_NoPendingMetrics_NoRequest(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 
 	flushPending(a, zap.NewNop())
@@ -230,7 +229,7 @@ func TestShutdown_InFlightSend_CounterCountedOnce(t *testing.T) {
 		},
 	)
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 
@@ -260,7 +259,7 @@ func TestShutdown_InFlightSendPastTimeout_KnownDoubleCount(t *testing.T) {
 		},
 	)
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 
@@ -284,7 +283,7 @@ func TestShutdown_RetryingSendPastTimeout_CounterCountedOnce(t *testing.T) {
 		},
 	)
 
-	a, err := agent.NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := agent.NewAgent(&http.Client{}, server.URL, agent.AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 

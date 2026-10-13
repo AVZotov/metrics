@@ -19,10 +19,13 @@ import (
 	"github.com/AVZotov/metrics/internal/buildinfo"
 	"github.com/AVZotov/metrics/internal/config"
 	"github.com/AVZotov/metrics/internal/encrypt"
+	"github.com/AVZotov/metrics/internal/grpcserver"
 	"github.com/AVZotov/metrics/internal/handler"
+	pb "github.com/AVZotov/metrics/internal/proto"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var buildVersion string
@@ -81,6 +84,19 @@ func run() error {
 		PrivateKey:    privateKey,
 		TrustedSubnet: cfg.TrustedSubnet,
 	})
+	if cfg.GRPCAddress != "" {
+		if cfg.Key != "" || cfg.CryptoKey != "" {
+			logger.Warn(
+				"signature verification and decryption apply to HTTP only; " +
+					"the gRPC endpoint accepts unsigned plaintext metrics",
+			)
+		}
+		grpcServer := grpc.NewServer(
+			grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(cfg.TrustedSubnet, logger)),
+		)
+		pb.RegisterMetricsServer(grpcServer, grpcserver.NewServer(s, logger))
+		// TODO(iter28): listen on cfg.GRPCAddress, Serve, and stop on shutdown.
+	}
 	server := &http.Server{
 		Addr:    cfg.String(),
 		Handler: mux,

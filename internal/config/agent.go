@@ -20,11 +20,14 @@ type AgentConfig struct {
 	// CryptoKey is the path to an RSA public key PEM file used to encrypt
 	// agent-to-server payloads. Empty disables encryption.
 	CryptoKey string `env:"CRYPTO_KEY"`
+	// GRPCAddress is the host:port of the server's gRPC endpoint. When set,
+	// metrics are sent over gRPC instead of HTTP; empty keeps HTTP.
+	GRPCAddress string `env:"GRPC_ADDRESS"`
 }
 
 // NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
-// Returns an error if flag parsing fails or poll interval, report interval,
-// or rate limit end up zero.
+// Returns an error if flag parsing fails, poll interval, report interval,
+// or rate limit end up zero, or the gRPC address isn't in host:port form.
 func NewAgentConfig() (*AgentConfig, error) {
 	conf := new(AgentConfig)
 	setAgentDefaults(conf)
@@ -62,6 +65,11 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	cryptoKey := flag.String(
 		"crypto-key", cfg.CryptoKey, "path to RSA public key file for encrypting agent-to-server messages",
 	)
+	grpcAddress := flag.String(
+		"grpc-address", cfg.GRPCAddress,
+		"server gRPC address in form host:port; empty sends metrics over HTTP. "+
+			"Signing (-k) and encryption (-crypto-key) apply to HTTP only",
+	)
 	var configPath string
 	flag.StringVar(&configPath, "c", "", "path to JSON config file")
 	flag.StringVar(&configPath, "config", "", "path to JSON config file")
@@ -73,6 +81,7 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	cfg.RateLimit = *rateLimitFlag
 	cfg.Key = *key
 	cfg.CryptoKey = *cryptoKey
+	cfg.GRPCAddress = *grpcAddress
 
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
@@ -103,7 +112,7 @@ func validateAgentConfig(cfg *AgentConfig) error {
 			return apperrors.ErrCryptoKeyUnavailable
 		}
 	}
-	return nil
+	return validateGRPCAddress(cfg.GRPCAddress)
 }
 
 // agentFileConfig is the JSON shape of the agent's config file. Fields are
@@ -115,6 +124,7 @@ type agentFileConfig struct {
 	ReportInterval *string `json:"report_interval"`
 	PollInterval   *string `json:"poll_interval"`
 	CryptoKey      *string `json:"crypto_key"`
+	GRPCAddress    *string `json:"grpc_address"`
 }
 
 // applyAgentConfigFile reads the JSON config file at path and merges its
@@ -148,6 +158,9 @@ func applyAgentConfigFile(cfg *AgentConfig, path string) error {
 	}
 	if fc.CryptoKey != nil {
 		cfg.CryptoKey = *fc.CryptoKey
+	}
+	if fc.GRPCAddress != nil {
+		cfg.GRPCAddress = *fc.GRPCAddress
 	}
 
 	return nil

@@ -18,7 +18,10 @@ import (
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
+	pb "github.com/AVZotov/metrics/internal/proto"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var buildVersion string
@@ -54,15 +57,37 @@ func run(logger *zap.Logger) error {
 	client := &http.Client{}
 	serverAddr := cfg.String()
 	baseURL := fmt.Sprintf("http://%s", serverAddr)
-	// The agent can't know whether the server enforces a trusted subnet, so
-	// a failure here only drops the X-Real-IP header instead of exiting.
-	realIP, err := agent.HostIP(serverAddr)
-	if err != nil {
-		logger.Warn("could not determine host IP, X-Real-IP header disabled", zap.Error(err))
-	} else {
-		logger.Info("determined host IP for X-Real-IP header", zap.String("ip", realIP.String()))
+	opts := agent.AgentOptions{Key: cfg.Key, CryptoKeyPath: cfg.CryptoKey}
+
+	// The real IP must be the one the agent uses to reach the server it
+	// actually reports to, so with gRPC it's resolved against the gRPC address.
+	ipTarget := serverAddr
+	if cfg.GRPCAddress != "" {
+		// NewClient doesn't connect; the connection is made on the first call.
+		var conn *grpc.ClientConn
+		conn, err = grpc.NewClient(cfg.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return fmt.Errorf("create gRPC client: %w", err)
+		}
+		defer func() { _ = conn.Close() }()
+		opts.GRPCClient = pb.NewMetricsClient(conn)
+		ipTarget = cfg.GRPCAddress
+		logger.Info("sending metrics over gRPC", zap.String("address", cfg.GRPCAddress))
+		if cfg.Key != "" || cfg.CryptoKey != "" {
+			logger.Warn("signing and encryption apply to HTTP only; gRPC metrics are sent unsigned and unencrypted")
+		}
 	}
-	a, err := agent.NewAgent(client, baseURL, cfg.Key, cfg.CryptoKey, realIP)
+
+	// The agent can't know whether the server enforces a trusted subnet, so
+	// a failure here only drops the real IP instead of exiting.
+	realIP, err := agent.HostIP(ipTarget)
+	if err != nil {
+		logger.Warn("could not determine host IP, real IP reporting disabled", zap.Error(err))
+	} else {
+		logger.Info("determined host IP for real IP reporting", zap.String("ip", realIP.String()))
+	}
+	opts.RealIP = realIP
+	a, err := agent.NewAgent(client, baseURL, opts)
 	if err != nil {
 		return err
 	}

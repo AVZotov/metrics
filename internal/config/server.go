@@ -41,12 +41,15 @@ type ServerConfig struct {
 	// value (IsValid() == false) means it wasn't configured and requests
 	// aren't restricted by source IP.
 	TrustedSubnet netip.Prefix `env:"TRUSTED_SUBNET"`
+	// GRPCAddress is the host:port the gRPC server listens on. Empty
+	// disables the gRPC server.
+	GRPCAddress string `env:"GRPC_ADDRESS"`
 }
 
 // NewServerConfig builds a ServerConfig from defaults, flags, and env vars.
 // Returns an error if flag parsing fails, the DSN is explicitly set but
-// empty, the audit file path or audit URL is invalid, or the trusted
-// subnet isn't a valid CIDR.
+// empty, the audit file path or audit URL is invalid, the trusted
+// subnet isn't a valid CIDR, or the gRPC address isn't in host:port form.
 func NewServerConfig() (*ServerConfig, error) {
 	conf := new(ServerConfig)
 	setServerDefaults(conf)
@@ -74,6 +77,9 @@ func NewServerConfig() (*ServerConfig, error) {
 		return nil, err
 	}
 	if err := validateCryptoKey(conf); err != nil {
+		return nil, err
+	}
+	if err := validateGRPCAddress(conf.GRPCAddress); err != nil {
 		return nil, err
 	}
 	return conf, nil
@@ -107,6 +113,11 @@ func parseServerFlags(config *ServerConfig) error {
 	flag.TextVar(
 		&config.TrustedSubnet, "t", config.TrustedSubnet,
 		"trusted agent subnet in CIDR notation; empty disables the check",
+	)
+	flag.StringVar(
+		&config.GRPCAddress, "grpc-address", config.GRPCAddress,
+		"gRPC server address in form host:port; empty disables gRPC. "+
+			"Signature verification (-k) and decryption (-crypto-key) apply to HTTP only",
 	)
 	var configPath string
 	flag.StringVar(&configPath, "c", "", "path to JSON config file")
@@ -213,6 +224,7 @@ type serverFileConfig struct {
 	DatabaseDSN   *string `json:"database_dsn"`
 	CryptoKey     *string `json:"crypto_key"`
 	TrustedSubnet *string `json:"trusted_subnet"`
+	GRPCAddress   *string `json:"grpc_address"`
 }
 
 // applyServerConfigFile reads the JSON config file at path and merges its
@@ -256,6 +268,9 @@ func applyServerConfigFile(cfg *ServerConfig, path string) error {
 		if err := cfg.TrustedSubnet.UnmarshalText([]byte(*fc.TrustedSubnet)); err != nil {
 			return fmt.Errorf("trusted_subnet: %w", err)
 		}
+	}
+	if fc.GRPCAddress != nil {
+		cfg.GRPCAddress = *fc.GRPCAddress
 	}
 
 	return nil

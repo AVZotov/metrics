@@ -44,7 +44,7 @@ func writeTestPublicKeyPEM(t *testing.T) string {
 
 func TestAgent_Collect_Check_Count(t *testing.T) {
 	want := int64(1)
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	got := a.counter["PollCount"]
@@ -52,7 +52,7 @@ func TestAgent_Collect_Check_Count(t *testing.T) {
 }
 
 func TestAgent_Collect_Check_Gauge(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	for _, k := range gMetrics {
@@ -72,7 +72,7 @@ func TestAgent_Report_Metrics_Count(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	err = a.Report(context.Background())
@@ -95,7 +95,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	err = a.Report(context.Background())
@@ -106,7 +106,7 @@ func TestAgent_Report_Metrics_ContentType(t *testing.T) {
 
 func TestNewAgent(t *testing.T) {
 	client := &http.Client{}
-	a, err := NewAgent(client, "http://localhost:8080", "", "", netip.Addr{})
+	a, err := NewAgent(client, "http://localhost:8080", AgentOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, "http://localhost:8080", a.baseURL)
@@ -117,7 +117,7 @@ func TestNewAgent(t *testing.T) {
 }
 
 func TestNewAgent_EmptyCryptoKeyPath_NoPubKey(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", AgentOptions{})
 	require.NoError(t, err)
 	assert.Nil(t, a.pubKey)
 }
@@ -125,20 +125,20 @@ func TestNewAgent_EmptyCryptoKeyPath_NoPubKey(t *testing.T) {
 func TestNewAgent_ValidCryptoKeyPath_SetsPubKey(t *testing.T) {
 	path := writeTestPublicKeyPEM(t)
 
-	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", path, netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", AgentOptions{CryptoKeyPath: path})
 	require.NoError(t, err)
 	require.NotNil(t, a)
 	assert.NotNil(t, a.pubKey)
 }
 
 func TestNewAgent_InvalidCryptoKeyPath_ReturnsError(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "/nonexistent/path/to/key.pem", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", AgentOptions{CryptoKeyPath: "/nonexistent/path/to/key.pem"})
 	assert.Error(t, err)
 	assert.Nil(t, a)
 }
 
 func TestAgent_Collect_PollCount_Accumulates(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	a.Collect()
@@ -157,7 +157,7 @@ func TestAgent_Report_ContentEncoding(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
@@ -175,7 +175,7 @@ func TestAgent_Report_URL(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
@@ -208,7 +208,7 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	require.NoError(t, a.Report(context.Background()))
@@ -231,7 +231,7 @@ func TestAgent_Report_Body_Gauge(t *testing.T) {
 }
 
 func TestAgent_Report_Error_On_Unreachable_Server(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "http://127.0.0.1:1", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://127.0.0.1:1", AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 	err = a.Report(context.Background())
@@ -239,14 +239,14 @@ func TestAgent_Report_Error_On_Unreachable_Server(t *testing.T) {
 }
 
 func TestAgent_SendMetricJSON_InvalidGaugeValue(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", AgentOptions{})
 	require.NoError(t, err)
 	err = a.sendMetricJSON(models.Gauge, "TestMetric", "notanumber")
 	assert.Error(t, err)
 }
 
 func TestAgent_SendMetricJSON_InvalidCounterValue(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "http://localhost:8080", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "http://localhost:8080", AgentOptions{})
 	require.NoError(t, err)
 	err = a.sendMetricJSON(models.Counter, "PollCount", "notanumber")
 	assert.Error(t, err)
@@ -262,7 +262,7 @@ func TestAgent_SendMetricJSON_NonOKStatus(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	err = a.sendMetricJSON(models.Gauge, "Alloc", "1.5")
 	assert.Error(t, err)
@@ -280,14 +280,14 @@ func TestAgent_SendMetric(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	err = a.sendMetric("gauge", "Alloc", "42.5")
 	require.NoError(t, err)
 }
 
 func TestAgent_AckSent_SubtractsDelta(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 
@@ -298,7 +298,7 @@ func TestAgent_AckSent_SubtractsDelta(t *testing.T) {
 }
 
 func TestAgent_AckSent_SkipsNonCounterMetrics(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 	a.gauge["Alloc"] = 42
@@ -311,7 +311,7 @@ func TestAgent_AckSent_SkipsNonCounterMetrics(t *testing.T) {
 }
 
 func TestAgent_AckSent_SkipsNilDelta(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.counter["PollCount"] = 10
 
@@ -326,7 +326,7 @@ func TestAgent_AckSent_SkipsNilDelta(t *testing.T) {
 // the counter to zero, so increments collected while the report was in flight
 // survive.
 func TestAgent_AckSent_PreservesIncrementsDuringRoundTrip(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	a.Collect() // PollCount = 1
 	sent := a.Snapshot()
@@ -339,7 +339,7 @@ func TestAgent_AckSent_PreservesIncrementsDuringRoundTrip(t *testing.T) {
 }
 
 func TestAgent_AckSent_ConcurrentWithCollect(t *testing.T) {
-	a, err := NewAgent(&http.Client{}, "", "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, "", AgentOptions{})
 	require.NoError(t, err)
 	const n = 500
 
@@ -387,7 +387,7 @@ func TestAgent_ConcurrentCollectReport(t *testing.T) {
 				),
 			)
 			defer server.Close()
-			a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+			a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 			require.NoError(t, err)
 			t.Run(
 				tt.name, func(t *testing.T) {
@@ -434,7 +434,7 @@ func TestAgent_SendWithRetry_CancelAbortsInFlightRequest(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.Addr{})
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{})
 	require.NoError(t, err)
 	a.Collect()
 
@@ -487,7 +487,7 @@ func TestAgent_Report_RealIPHeader(t *testing.T) {
 			)
 			defer server.Close()
 
-			a, err := NewAgent(&http.Client{}, server.URL, "", "", tt.realIP)
+			a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{RealIP: tt.realIP})
 			require.NoError(t, err)
 			a.Collect()
 
@@ -519,7 +519,7 @@ func TestAgent_SendWithRetry_RealIPHeaderOnRetry(t *testing.T) {
 	)
 	defer server.Close()
 
-	a, err := NewAgent(&http.Client{}, server.URL, "", "", netip.MustParseAddr("192.168.1.10"))
+	a, err := NewAgent(&http.Client{}, server.URL, AgentOptions{RealIP: netip.MustParseAddr("192.168.1.10")})
 	require.NoError(t, err)
 	a.Collect()
 
