@@ -56,9 +56,9 @@ func (s *blockingMetricsServer) UpdateMetrics(
 	}
 }
 
-// startGRPC serves svc on a random local port and returns the server, its
+// serveTestGRPC serves svc on a random local port and returns the server, its
 // address, and a channel that receives Serve's result.
-func startGRPC(t *testing.T, svc pb.MetricsServer) (*grpc.Server, string, <-chan error) {
+func serveTestGRPC(t *testing.T, svc pb.MetricsServer) (*grpc.Server, string, <-chan error) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func waitFor[T any](t *testing.T, ch <-chan T, what string) T {
 // TestStopGRPC_NoInFlightCalls_StopsGracefully verifies that with no calls
 // in progress stopGRPC returns right away without forcing a hard stop.
 func TestStopGRPC_NoInFlightCalls_StopsGracefully(t *testing.T) {
-	srv, _, serveErr := startGRPC(t, newBlockingMetricsServer(true))
+	srv, _, serveErr := serveTestGRPC(t, newBlockingMetricsServer(true))
 	logger, logs := newObservedLogger()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -141,7 +141,7 @@ func TestStopGRPC_NoInFlightCalls_StopsGracefully(t *testing.T) {
 // is left blocked. The handler returns as soon as Stop cancels its context.
 func TestStopGRPC_HungCall_ForcesStopAfterTimeout(t *testing.T) {
 	svc := newBlockingMetricsServer(true)
-	srv, addr, serveErr := startGRPC(t, svc)
+	srv, addr, serveErr := serveTestGRPC(t, svc)
 	logger, logs := newObservedLogger()
 	callErr := startHungCall(t, svc, addr)
 
@@ -168,7 +168,7 @@ func TestStopGRPC_HungCall_ForcesStopAfterTimeout(t *testing.T) {
 // The client is still cut off at the timeout.
 func TestStopGRPC_HandlerIgnoringCtx_KnownWaitsPastTimeout(t *testing.T) {
 	svc := newBlockingMetricsServer(false)
-	srv, addr, serveErr := startGRPC(t, svc)
+	srv, addr, serveErr := serveTestGRPC(t, svc)
 	logger, _ := newObservedLogger()
 	callErr := startHungCall(t, svc, addr)
 

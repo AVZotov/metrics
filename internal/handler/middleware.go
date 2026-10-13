@@ -14,6 +14,7 @@ import (
 	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
+	"github.com/AVZotov/metrics/internal/trustedsubnet"
 	"go.uber.org/zap"
 )
 
@@ -256,28 +257,10 @@ func trustedSubnetMiddleware(subnet netip.Prefix, logger *zap.Logger) func(http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
-				if !subnet.IsValid() {
-					next.ServeHTTP(w, r)
-					return
-				}
 				rawIP := r.Header.Get("X-Real-IP")
-				if rawIP == "" {
+				if err := trustedsubnet.Check(subnet, rawIP); err != nil {
+					logger.Warn("request rejected by trusted subnet", zap.String("ip", rawIP), zap.Error(err))
 					http.Error(w, "forbidden", http.StatusForbidden)
-					logger.Warn("no IP header found")
-					return
-				}
-				ip, err := netip.ParseAddr(rawIP)
-				if err != nil {
-					http.Error(w, "forbidden", http.StatusForbidden)
-					logger.Warn("invalid IP address", zap.String("ip", rawIP), zap.Error(err))
-					return
-				}
-
-				cleanIP := ip.Unmap()
-
-				if !subnet.Contains(cleanIP) {
-					http.Error(w, "forbidden", http.StatusForbidden)
-					logger.Warn("IP address not in subnet", zap.String("ip", rawIP))
 					return
 				}
 				next.ServeHTTP(w, r)

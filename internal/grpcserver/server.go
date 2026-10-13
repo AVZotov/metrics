@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -34,6 +36,21 @@ type Server struct {
 // NewServer returns a gRPC Metrics server that stores metrics via service.
 func NewServer(service metricsUpdater, logger *zap.Logger) *Server {
 	return &Server{service: service, logger: logger}
+}
+
+// NewGRPCServer returns a *grpc.Server with the Metrics service registered
+// on top of service. Every unary call goes through RecoveryInterceptor
+// first and then TrustedSubnetInterceptor(subnet), so panics in either the
+// subnet check or the handler are recovered.
+func NewGRPCServer(service metricsUpdater, subnet netip.Prefix, logger *zap.Logger) *grpc.Server {
+	srv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			RecoveryInterceptor(logger),
+			TrustedSubnetInterceptor(subnet, logger),
+		),
+	)
+	pb.RegisterMetricsServer(srv, NewServer(service, logger))
+	return srv
 }
 
 // toModel converts a protobuf metric into the service model.

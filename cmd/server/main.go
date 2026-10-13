@@ -23,7 +23,6 @@ import (
 	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/grpcserver"
 	"github.com/AVZotov/metrics/internal/handler"
-	pb "github.com/AVZotov/metrics/internal/proto"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
 	"go.uber.org/zap"
@@ -92,31 +91,10 @@ func run() error {
 	)
 	var grpcServer *grpc.Server
 	if cfg.GRPCAddress != "" {
-		if cfg.Key != "" || cfg.CryptoKey != "" {
-			logger.Warn(
-				"signature verification and decryption apply to HTTP only; " +
-					"the gRPC endpoint accepts unsigned plaintext metrics",
-			)
+		grpcServer, err = startGRPC(cfg, s, logger)
+		if err != nil {
+			return err
 		}
-		lis, listenErr := net.Listen("tcp", cfg.GRPCAddress)
-		if listenErr != nil {
-			return fmt.Errorf("listen gRPC on %s: %w", cfg.GRPCAddress, listenErr)
-		}
-		grpcServer = grpc.NewServer(
-			grpc.ChainUnaryInterceptor(
-				grpcserver.RecoveryInterceptor(logger),
-				grpcserver.TrustedSubnetInterceptor(cfg.TrustedSubnet, logger),
-			),
-		)
-		pb.RegisterMetricsServer(grpcServer, grpcserver.NewServer(s, logger))
-		go func() {
-			// Serve returns ErrServerStopped if shutdown stops the server
-			// before this goroutine reaches Serve.
-			if err := grpcServer.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-				log.Fatal(err)
-			}
-		}()
-		logger.Info("gRPC server listening", zap.String("address", cfg.GRPCAddress))
 	}
 	server := &http.Server{
 		Addr:    cfg.String(),
@@ -213,6 +191,31 @@ func initRepo(
 	}
 
 	return repo, nil
+}
+
+// startGRPC listens on cfg.GRPCAddress and serves the Metrics service over
+// gRPC in the background. Returns an error if the address can't be bound.
+func startGRPC(cfg *config.ServerConfig, svc *service.MetricsService, logger *zap.Logger) (*grpc.Server, error) {
+	if cfg.Key != "" || cfg.CryptoKey != "" {
+		logger.Warn(
+			"signature verification and decryption apply to HTTP only; " +
+				"the gRPC endpoint accepts unsigned plaintext metrics",
+		)
+	}
+	lis, err := net.Listen("tcp", cfg.GRPCAddress)
+	if err != nil {
+		return nil, fmt.Errorf("listen gRPC on %s: %w", cfg.GRPCAddress, err)
+	}
+	srv := grpcserver.NewGRPCServer(svc, cfg.TrustedSubnet, logger)
+	go func() {
+		// Serve returns ErrServerStopped if shutdown stops the server
+		// before this goroutine reaches Serve.
+		if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			log.Fatal(err)
+		}
+	}()
+	logger.Info("gRPC server listening", zap.String("address", cfg.GRPCAddress))
+	return srv, nil
 }
 
 // stopGRPC stops srv gracefully. If ctx expires first, it calls Stop, which

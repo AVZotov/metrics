@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/AVZotov/metrics/internal/trustedsubnet"
 )
 
 // RecoveryInterceptor turns a panic in any later interceptor or handler into
@@ -35,29 +37,13 @@ func RecoveryInterceptor(logger *zap.Logger) grpc.UnaryServerInterceptor {
 // unparsable or outside subnet with codes.PermissionDenied. The zero subnet
 // (IsValid() == false) disables the check and lets every call pass through.
 func TrustedSubnetInterceptor(subnet netip.Prefix, logger *zap.Logger) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if !subnet.IsValid() {
-			return handler(ctx, req)
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		var rawIP string
+		if vals := metadata.ValueFromIncomingContext(ctx, "x-real-ip"); len(vals) > 0 {
+			rawIP = vals[0]
 		}
-		md, ok := metadata.FromIncomingContext(ctx)
-		if !ok {
-			logger.Warn("metadata not found in incoming context")
-			return nil, status.Error(codes.PermissionDenied, "permission denied")
-		}
-		vals := md.Get("x-real-ip")
-		if len(vals) == 0 || vals[0] == "" {
-			logger.Warn("x-real-ip not found in metadata")
-			return nil, status.Error(codes.PermissionDenied, "permission denied")
-		}
-		rawIP := vals[0]
-		ip, err := netip.ParseAddr(rawIP)
-		if err != nil {
-			logger.Warn("failed to parse ip", zap.String("ip", rawIP), zap.Error(err))
-			return nil, status.Error(codes.PermissionDenied, "permission denied")
-		}
-		cleanIP := ip.Unmap()
-		if !subnet.Contains(cleanIP) {
-			logger.Warn("ip not in subnet", zap.String("ip", cleanIP.String()))
+		if err := trustedsubnet.Check(subnet, rawIP); err != nil {
+			logger.Warn("request rejected by trusted subnet", zap.String("ip", rawIP), zap.Error(err))
 			return nil, status.Error(codes.PermissionDenied, "permission denied")
 		}
 		return handler(ctx, req)

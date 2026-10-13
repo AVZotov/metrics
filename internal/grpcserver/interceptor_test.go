@@ -130,13 +130,7 @@ func TestRecoveryInterceptor_HandlerPanic(t *testing.T) {
 	logger := zap.New(core)
 
 	lis := bufconn.Listen(1 << 20)
-	srv := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(
-			RecoveryInterceptor(logger),
-			TrustedSubnetInterceptor(netip.Prefix{}, logger),
-		),
-	)
-	pb.RegisterMetricsServer(srv, NewServer(&panicOnceUpdater{}, logger))
+	srv := NewGRPCServer(&panicOnceUpdater{}, netip.Prefix{}, logger)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
