@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -42,7 +44,9 @@ func main() {
 }
 
 func run() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	ctx, cancel := signal.NotifyContext(
+		context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT,
+	)
 	defer cancel()
 	wg := sync.WaitGroup{}
 
@@ -78,12 +82,15 @@ func run() error {
 	auditNotifier := audit.NewNotifier(&cfg.Audit, logger)
 	s := service.NewMetricsService(repo, auditNotifier)
 	h := handler.New(s, logger)
-	mux := handler.NewRouter(h, logger, handler.RouterOptions{
-		Key:           cfg.Key,
-		EnablePprof:   cfg.EnablePprof,
-		PrivateKey:    privateKey,
-		TrustedSubnet: cfg.TrustedSubnet,
-	})
+	mux := handler.NewRouter(
+		h, logger, handler.RouterOptions{
+			Key:           cfg.Key,
+			EnablePprof:   cfg.EnablePprof,
+			PrivateKey:    privateKey,
+			TrustedSubnet: cfg.TrustedSubnet,
+		},
+	)
+	var grpcServer *grpc.Server
 	if cfg.GRPCAddress != "" {
 		if cfg.Key != "" || cfg.CryptoKey != "" {
 			logger.Warn(
@@ -91,11 +98,22 @@ func run() error {
 					"the gRPC endpoint accepts unsigned plaintext metrics",
 			)
 		}
-		grpcServer := grpc.NewServer(
+		lis, listenErr := net.Listen("tcp", cfg.GRPCAddress)
+		if listenErr != nil {
+			return fmt.Errorf("listen gRPC on %s: %w", cfg.GRPCAddress, listenErr)
+		}
+		grpcServer = grpc.NewServer(
 			grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(cfg.TrustedSubnet, logger)),
 		)
 		pb.RegisterMetricsServer(grpcServer, grpcserver.NewServer(s, logger))
-		// TODO(iter28): listen on cfg.GRPCAddress, Serve, and stop on shutdown.
+		go func() {
+			// Serve returns ErrServerStopped if shutdown stops the server
+			// before this goroutine reaches Serve.
+			if err := grpcServer.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				log.Fatal(err)
+			}
+		}()
+		logger.Info("gRPC server listening", zap.String("address", cfg.GRPCAddress))
 	}
 	server := &http.Server{
 		Addr:    cfg.String(),
@@ -118,6 +136,9 @@ func run() error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error(err.Error())
 		shutdownErr = errors.Join(shutdownErr, err)
+	}
+	if grpcServer != nil {
+		stopGRPC(shutdownCtx, grpcServer, logger)
 	}
 	wg.Wait()
 	if err := repo.Dump(); err != nil {
@@ -189,4 +210,24 @@ func initRepo(
 	}
 
 	return repo, nil
+}
+
+// stopGRPC stops srv gracefully. If ctx expires first, it calls Stop, which
+// closes client connections and cancels in-flight calls' contexts, then
+// still waits for running handlers to return: grpc-go's GracefulStop
+// always does. A handler that ignores its ctx can therefore delay shutdown
+// past ctx's deadline
+func stopGRPC(ctx context.Context, srv *grpc.Server, logger *zap.Logger) {
+	done := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.Warn("gRPC graceful stop timed out, forcing stop", zap.Error(ctx.Err()))
+		srv.Stop()
+		<-done
+	}
 }
