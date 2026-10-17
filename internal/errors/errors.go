@@ -48,6 +48,16 @@ var (
 	// ErrCryptoKeyUnavailable means -crypto-key/CRYPTO_KEY was set but the
 	// file it points to doesn't exist or can't be accessed.
 	ErrCryptoKeyUnavailable = errors.New("crypto key file is unavailable")
+	// ErrGRPCTLSNotConfigured means gRPC is enabled but a TLS file it needs
+	// (server certificate and key, or the agent's trusted CA) isn't set.
+	ErrGRPCTLSNotConfigured = errors.New("gRPC is enabled but its TLS file is not set")
+	// ErrGRPCTLSFileUnavailable means a gRPC TLS file is set but doesn't
+	// exist, can't be accessed or is a directory.
+	ErrGRPCTLSFileUnavailable = errors.New("gRPC TLS file is unavailable")
+	// ErrGRPCTLSRequired means the gRPC server was given no transport
+	// credentials or non-TLS ones, either of which would make it serve
+	// plaintext.
+	ErrGRPCTLSRequired = errors.New("gRPC server requires TLS transport credentials")
 	// ErrUnexpectedCipherLength means the encrypted data is shorter than the
 	// GCM nonce, so it can't possibly be valid ciphertext.
 	ErrUnexpectedCipherLength = errors.New("unexpected cipher length")

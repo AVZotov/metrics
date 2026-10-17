@@ -4,18 +4,27 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AVZotov/metrics/internal/agent"
+	"github.com/AVZotov/metrics/internal/grpcserver"
 	models "github.com/AVZotov/metrics/internal/model"
+	pb "github.com/AVZotov/metrics/internal/proto"
+	"github.com/AVZotov/metrics/internal/testcert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 func findDelta(metrics []models.Metrics, id string) *int64 {
@@ -350,4 +359,78 @@ func TestWaitWithTimeout_ReturnsFalseOnTimeout(t *testing.T) {
 	assert.False(t, waitWithTimeout(&wg, 20*time.Millisecond))
 
 	wg.Done()
+}
+
+// countingUpdater counts the metric batches the gRPC server stores.
+type countingUpdater struct {
+	calls atomic.Int32
+}
+
+func (c *countingUpdater) UpdateMetrics([]models.Metrics, string) error {
+	c.calls.Add(1)
+	return nil
+}
+
+// serveTLS starts the production gRPC server over TLS with the certificate
+// at certPath and returns its address.
+func serveTLS(t *testing.T, svc *countingUpdater, certPath, keyPath string) string {
+	t.Helper()
+	creds, err := credentials.NewServerTLSFromFile(certPath, keyPath)
+	require.NoError(t, err)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv, err := grpcserver.NewGRPCServer(svc, netip.Prefix{}, creds, zap.NewNop())
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	return lis.Addr().String()
+}
+
+// TestDialGRPC_TLS checks the agent's gRPC connection: it succeeds only
+// when the agent trusts the server's certificate.
+func TestDialGRPC_TLS(t *testing.T) {
+	serverCert, serverKey := testcert.Files(t)
+	otherCert, _ := testcert.Files(t)
+
+	tests := []struct {
+		name   string
+		caPath string
+		// wantErr is a substring of the call's error; empty means success.
+		wantErr string
+	}{
+		{name: "trusted server certificate", caPath: serverCert},
+		{name: "untrusted server certificate is rejected", caPath: otherCert, wantErr: "certificate"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &countingUpdater{}
+			addr := serveTLS(t, svc, serverCert, serverKey)
+
+			conn, err := dialGRPC(addr, tt.caPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close() })
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			req := pb.UpdateMetricsRequest_builder{
+				Metrics: []*pb.Metric{pb.Metric_builder{Id: "Alloc", Type: pb.Metric_GAUGE, Value: 1}.Build()},
+			}.Build()
+			_, err = pb.NewMetricsClient(conn).UpdateMetrics(ctx, req)
+
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				assert.Equal(t, int32(1), svc.calls.Load())
+				return
+			}
+			assert.Equal(t, codes.Unavailable, status.Code(err))
+			assert.ErrorContains(t, err, tt.wantErr)
+			assert.Zero(t, svc.calls.Load(), "the server must not store metrics over a rejected connection")
+		})
+	}
+}
+
+func TestDialGRPC_CAUnavailable(t *testing.T) {
+	_, err := dialGRPC("127.0.0.1:1", filepath.Join(t.TempDir(), "absent.pem"))
+	assert.ErrorContains(t, err, "load gRPC CA certificate")
 }

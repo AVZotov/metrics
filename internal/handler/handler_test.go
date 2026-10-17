@@ -23,6 +23,7 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
+	"github.com/AVZotov/metrics/internal/sign"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -195,6 +196,110 @@ func TestNewRouter_TrustedSubnet(t *testing.T) {
 			if rt.write {
 				assert.Equal(t, 1, *writes)
 			}
+		})
+	}
+}
+
+// TestNewRouter_OptionalMiddleware checks that signature verification,
+// decryption and the trusted subnet check are mounted only when their
+// RouterOptions field is set: unset, the request reaches the handler
+// untouched; set, it is checked.
+func TestNewRouter_OptionalMiddleware(t *testing.T) {
+	const signKey = "secret"
+	body := []byte(`[{"id":"g","type":"gauge","value":1.5}]`)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	encrypted, encryptedKeyB64, err := encrypt.EncryptHybrid(&privateKey.PublicKey, body)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		opts       RouterOptions
+		body       []byte
+		headers    map[string]string
+		wantCode   int
+		wantWrites int
+		// wantSigned reports whether the response carries a HashSHA256 header.
+		wantSigned bool
+	}{
+		{
+			name:       "no key: signature is not checked and response is not signed",
+			body:       body,
+			headers:    map[string]string{"HashSHA256": "bogus"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:     "key set: wrong signature is rejected",
+			opts:     RouterOptions{Key: signKey},
+			body:     body,
+			headers:  map[string]string{"HashSHA256": "bogus"},
+			wantCode: http.StatusBadRequest,
+			// The 400 is signed too: the middleware signs every response.
+			wantSigned: true,
+		},
+		{
+			name:       "key set: valid signature passes and response is signed",
+			opts:       RouterOptions{Key: signKey},
+			body:       body,
+			headers:    map[string]string{"HashSHA256": sign.Sign(body, signKey)},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+			wantSigned: true,
+		},
+		{
+			name:       "no private key: X-Crypto-Key is ignored and plaintext reaches the handler",
+			body:       body,
+			headers:    map[string]string{"X-Crypto-Key": "anything"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "private key set: encrypted body is decrypted",
+			opts:       RouterOptions{PrivateKey: privateKey},
+			body:       encrypted,
+			headers:    map[string]string{"X-Crypto-Key": encryptedKeyB64},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "no trusted subnet: write from any X-Real-IP passes",
+			body:       body,
+			headers:    map[string]string{"X-Real-IP": "10.0.0.1"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "no trusted subnet: write without X-Real-IP passes",
+			body:       body,
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writes := 0
+			svc := &mockService{
+				updateMetricsFn: func([]models.Metrics) error {
+					writes++
+					return nil
+				},
+			}
+			router := NewRouter(New(svc, zap.NewNop()), zap.NewNop(), tt.opts)
+
+			req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantCode, w.Code)
+			assert.Equal(t, tt.wantWrites, writes)
+			assert.Equal(t, tt.wantSigned, w.Header().Get("HashSHA256") != "")
 		})
 	}
 }
@@ -1055,24 +1160,6 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	assert.Equal(t, respBody, string(decompressed))
 }
 
-func TestDecryptMiddleware_NoHeaderNoPrivateKey_Passthrough(t *testing.T) {
-	body := `{"id":"cpu","type":"gauge","value":1.5}`
-	var gotBody string
-	next := http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			b, _ := io.ReadAll(r.Body)
-			gotBody = string(b)
-			w.WriteHeader(http.StatusOK)
-		},
-	)
-	mw := decryptMiddleware(nil, zap.NewNop())(next)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, body, gotBody)
-}
-
 func TestDecryptMiddleware_NoHeaderWithPrivateKeyConfigured_Passthrough(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -1092,23 +1179,6 @@ func TestDecryptMiddleware_NoHeaderWithPrivateKeyConfigured_Passthrough(t *testi
 	mw.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, body, gotBody)
-}
-
-func TestDecryptMiddleware_HeaderPresentNoPrivateKey_Returns500WithoutCallingNext(t *testing.T) {
-	nextCalls := 0
-	next := http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			nextCalls++
-			w.WriteHeader(http.StatusOK)
-		},
-	)
-	mw := decryptMiddleware(nil, zap.NewNop())(next)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("irrelevant body"))
-	req.Header.Set("X-Crypto-Key", "anything")
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, 0, nextCalls, "next handler must not run when a key is required but unconfigured")
 }
 
 func TestDecryptMiddleware_ValidHeaderAndBody_DecryptsBeforeNext(t *testing.T) {

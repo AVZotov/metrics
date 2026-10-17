@@ -59,12 +59,12 @@ func TestToProto(t *testing.T) {
 		{
 			name: "gauge",
 			in:   models.Metrics{ID: "Alloc", MType: models.Gauge, Value: &value},
-			want: &pb.Metric{Id: "Alloc", Type: pb.Metric_GAUGE, Value: value},
+			want: pb.Metric_builder{Id: "Alloc", Type: pb.Metric_GAUGE, Value: value}.Build(),
 		},
 		{
 			name: "counter",
 			in:   models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
-			want: &pb.Metric{Id: "PollCount", Type: pb.Metric_COUNTER, Delta: delta},
+			want: pb.Metric_builder{Id: "PollCount", Type: pb.Metric_COUNTER, Delta: delta}.Build(),
 		},
 		{
 			name:    "gauge with nil value",

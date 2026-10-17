@@ -105,13 +105,6 @@ func TestTrustedSubnetMiddleware(t *testing.T) {
 			wantCalled:    true,
 		},
 		{
-			name:          "trusted subnet not specified on server request should pass",
-			trustedSubnet: netip.Prefix{},
-			realIP:        "192.168.0.5",
-			wantCode:      http.StatusOK,
-			wantCalled:    true,
-		},
-		{
 			name:          "empty header request should fail",
 			trustedSubnet: netip.MustParsePrefix("192.168.0.0/24"),
 			realIP:        "",

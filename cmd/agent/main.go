@@ -21,7 +21,7 @@ import (
 	pb "github.com/AVZotov/metrics/internal/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 )
 
 var buildVersion string
@@ -63,18 +63,20 @@ func run(logger *zap.Logger) error {
 	// actually reports to, so with gRPC it's resolved against the gRPC address.
 	ipTarget := serverAddr
 	if cfg.GRPCAddress != "" {
-		// NewClient doesn't connect; the connection is made on the first call.
 		var conn *grpc.ClientConn
-		conn, err = grpc.NewClient(cfg.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = dialGRPC(cfg.GRPCAddress, cfg.GRPCCA)
 		if err != nil {
-			return fmt.Errorf("create gRPC client: %w", err)
+			return err
 		}
 		defer func() { _ = conn.Close() }()
 		opts.GRPCClient = pb.NewMetricsClient(conn)
 		ipTarget = cfg.GRPCAddress
-		logger.Info("sending metrics over gRPC", zap.String("address", cfg.GRPCAddress))
+		logger.Info("sending metrics over gRPC with TLS", zap.String("address", cfg.GRPCAddress))
 		if cfg.Key != "" || cfg.CryptoKey != "" {
-			logger.Warn("signing and encryption apply to HTTP only; gRPC metrics are sent unsigned and unencrypted")
+			logger.Warn(
+				"gRPC traffic is encrypted with TLS, but signing (-k) and body encryption " +
+					"(-crypto-key) apply to HTTP only; gRPC metrics are sent without them",
+			)
 		}
 	}
 
@@ -133,6 +135,22 @@ func run(logger *zap.Logger) error {
 
 	logger.Info("agent shut down")
 	return nil
+}
+
+// dialGRPC returns a TLS client connection to address that trusts only the
+// PEM certificate at caPath. The server's certificate must be signed by it
+// (or be it) and list the host from address in its SANs. NewClient doesn't
+// connect; the connection and TLS handshake happen on the first call.
+func dialGRPC(address, caPath string) (*grpc.ClientConn, error) {
+	creds, err := credentials.NewClientTLSFromFile(caPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("load gRPC CA certificate: %w", err)
+	}
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, fmt.Errorf("create gRPC client: %w", err)
+	}
+	return conn, nil
 }
 
 // stopWorkers waits up to timeout for all agent goroutines to finish. If

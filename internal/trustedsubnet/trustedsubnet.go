@@ -17,14 +17,14 @@ var (
 )
 
 // Check reports whether rawIP is allowed by subnet. It returns nil when it
-// is, or when subnet is the zero Prefix (IsValid() == false), which disables
-// the check. Otherwise it returns an error wrapping ErrNoIP, ErrInvalidIP or
+// is, and otherwise an error wrapping ErrNoIP, ErrInvalidIP or
 // ErrOutsideSubnet. IPv4-mapped IPv6 addresses are unmapped before the
 // subnet test, so "::ffff:192.168.0.5" matches 192.168.0.0/24.
+//
+// The zero Prefix (IsValid() == false) rejects every IP. Check does not
+// treat it as "no restriction". Callers must install the check only when a
+// subnet is configured, and skip it entirely otherwise.
 func Check(subnet netip.Prefix, rawIP string) error {
-	if !subnet.IsValid() {
-		return nil
-	}
 	if rawIP == "" {
 		return ErrNoIP
 	}

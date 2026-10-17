@@ -2,7 +2,6 @@ package handler
 
 import (
 	"crypto/rsa"
-	"net/http"
 	"net/netip"
 
 	"github.com/go-chi/chi/v5"
@@ -39,13 +38,15 @@ func NewRouter(h *Handler, logger *zap.Logger, opts RouterOptions) *chi.Mux {
 func register(mux *chi.Mux, h *Handler, logger *zap.Logger, opts RouterOptions) {
 	// Each call builds fresh middleware instances, so every group gets its
 	// own chain, the same as listing the middleware inline per group.
+	// Optional middleware is added only when its option is set.
 
 	// Text-format API: /update/{type}/{name}/{value}, /value/{type}/{name}.
 	plain := func() chi.Middlewares {
-		return chi.Chain(
-			signMiddleware(opts.Key),
-			compressMiddleware(logger),
-		)
+		var mws chi.Middlewares
+		if opts.Key != "" {
+			mws = append(mws, signMiddleware(opts.Key))
+		}
+		return append(mws, compressMiddleware(logger))
 	}
 
 	// JSON API. Middleware order is required, not cosmetic: it must undo
@@ -56,17 +57,27 @@ func register(mux *chi.Mux, h *Handler, logger *zap.Logger, opts RouterOptions) 
 	// just start getting 400s from whichever middleware receives bytes it
 	// can't read.
 	jsonAPI := func() chi.Middlewares {
-		return chi.Chain(
-			signMiddleware(opts.Key),
-			decryptMiddleware(opts.PrivateKey, logger),
+		var mws chi.Middlewares
+		if opts.Key != "" {
+			mws = append(mws, signMiddleware(opts.Key))
+		}
+		if opts.PrivateKey != nil {
+			mws = append(mws, decryptMiddleware(opts.PrivateKey, logger))
+		}
+		return append(mws,
 			compressMiddleware(logger),
 			contentTypeMiddleware("application/json"),
 		)
 	}
 
+	var trusted chi.Middlewares
+	if opts.TrustedSubnet.IsValid() {
+		trusted = append(trusted, trustedSubnetMiddleware(opts.TrustedSubnet, logger))
+	}
+
 	registerPublic(mux, h, logger, opts.EnablePprof)
 	registerReads(mux, h, plain, jsonAPI)
-	registerWrites(mux, h, trustedSubnetMiddleware(opts.TrustedSubnet, logger), plain, jsonAPI)
+	registerWrites(mux, h, trusted, plain, jsonAPI)
 }
 
 // registerPublic mounts endpoints that need no signature: the health
@@ -91,15 +102,16 @@ func registerReads(r chi.Router, h *Handler, plain, jsonAPI func() chi.Middlewar
 	})
 }
 
-// registerWrites mounts metric write endpoints. The trusted subnet check
-// runs first: it only reads a header, so untrusted agents get 403 before
-// any body is read for signature verification or decryption.
+// registerWrites mounts metric write endpoints. trusted holds the trusted
+// subnet check, or nothing when no subnet is configured. It runs first: it
+// only reads a header, so untrusted agents get 403 before any body is read
+// for signature verification or decryption.
 func registerWrites(
-	r chi.Router, h *Handler, trusted func(http.Handler) http.Handler,
+	r chi.Router, h *Handler, trusted chi.Middlewares,
 	plain, jsonAPI func() chi.Middlewares,
 ) {
 	r.Group(func(r chi.Router) {
-		r.Use(trusted)
+		r.Use(trusted...)
 
 		r.Group(func(r chi.Router) {
 			r.Use(plain()...)

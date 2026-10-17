@@ -17,12 +17,12 @@ func toProto(m models.Metrics) (*pb.Metric, error) {
 		if m.Value == nil {
 			return nil, apperrors.ErrEmptyMetricValue
 		}
-		return &pb.Metric{Id: m.ID, Type: pb.Metric_GAUGE, Value: *m.Value}, nil
+		return pb.Metric_builder{Id: m.ID, Type: pb.Metric_GAUGE, Value: *m.Value}.Build(), nil
 	case models.Counter:
 		if m.Delta == nil {
 			return nil, apperrors.ErrEmptyMetricValue
 		}
-		return &pb.Metric{Id: m.ID, Type: pb.Metric_COUNTER, Delta: *m.Delta}, nil
+		return pb.Metric_builder{Id: m.ID, Type: pb.Metric_COUNTER, Delta: *m.Delta}.Build(), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", apperrors.ErrUnknownMetricType, m.MType)
 	}
@@ -38,7 +38,7 @@ func (a *Agent) sendMetricsGRPC(ctx context.Context, metrics []models.Metrics) e
 		}
 		protoMetrics = append(protoMetrics, pm)
 	}
-	req := &pb.UpdateMetricsRequest{Metrics: protoMetrics}
+	req := pb.UpdateMetricsRequest_builder{Metrics: protoMetrics}.Build()
 	if a.realIP.IsValid() {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-real-ip", a.realIP.String())
 	}

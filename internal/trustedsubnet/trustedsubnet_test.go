@@ -16,8 +16,7 @@ func TestCheck(t *testing.T) {
 		rawIP   string
 		wantErr error
 	}{
-		{name: "zero subnet allows anything", subnet: netip.Prefix{}, rawIP: "garbage"},
-		{name: "zero subnet allows empty IP", subnet: netip.Prefix{}, rawIP: ""},
+		{name: "zero subnet rejects every IP", subnet: netip.Prefix{}, rawIP: "192.168.0.5", wantErr: ErrOutsideSubnet},
 		{name: "IPv4 inside subnet", subnet: trusted, rawIP: "192.168.0.5"},
 		{name: "IPv4-mapped IPv6 inside subnet", subnet: trusted, rawIP: "::ffff:192.168.0.5"},
 		{name: "empty IP", subnet: trusted, rawIP: "", wantErr: ErrNoIP},

@@ -23,11 +23,15 @@ type AgentConfig struct {
 	// GRPCAddress is the host:port of the server's gRPC endpoint. When set,
 	// metrics are sent over gRPC instead of HTTP; empty keeps HTTP.
 	GRPCAddress string `env:"GRPC_ADDRESS"`
+	// GRPCCA is the path to the PEM certificate the agent trusts for the
+	// gRPC server's TLS certificate. Required when GRPCAddress is set.
+	GRPCCA string `env:"GRPC_CA"`
 }
 
 // NewAgentConfig builds an AgentConfig from defaults, flags, and env vars.
 // Returns an error if flag parsing fails, poll interval, report interval,
-// or rate limit end up zero, or the gRPC address isn't in host:port form.
+// or rate limit end up zero, the gRPC address isn't in host:port form, or
+// gRPC is enabled without a readable trusted CA certificate.
 func NewAgentConfig() (*AgentConfig, error) {
 	conf := new(AgentConfig)
 	setAgentDefaults(conf)
@@ -67,8 +71,12 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	)
 	grpcAddress := flag.String(
 		"grpc-address", cfg.GRPCAddress,
-		"server gRPC address in form host:port; empty sends metrics over HTTP. "+
-			"Signing (-k) and encryption (-crypto-key) apply to HTTP only",
+		"server gRPC address in form host:port; empty sends metrics over HTTP. Requires -grpc-ca. "+
+			"gRPC traffic is encrypted with TLS; signing (-k) and body encryption (-crypto-key) apply to HTTP only",
+	)
+	grpcCA := flag.String(
+		"grpc-ca", cfg.GRPCCA,
+		"path to the PEM certificate trusted for the gRPC server's TLS certificate; required with -grpc-address",
 	)
 	var configPath string
 	flag.StringVar(&configPath, "c", "", "path to JSON config file")
@@ -82,6 +90,7 @@ func parseAgentFlags(cfg *AgentConfig) error {
 	cfg.Key = *key
 	cfg.CryptoKey = *cryptoKey
 	cfg.GRPCAddress = *grpcAddress
+	cfg.GRPCCA = *grpcCA
 
 	if flag.NArg() > 0 {
 		for _, arg := range flag.Args() {
@@ -112,7 +121,10 @@ func validateAgentConfig(cfg *AgentConfig) error {
 			return apperrors.ErrCryptoKeyUnavailable
 		}
 	}
-	return validateGRPCAddress(cfg.GRPCAddress)
+	if err := validateGRPCAddress(cfg.GRPCAddress); err != nil {
+		return err
+	}
+	return validateGRPCTLS(cfg.GRPCAddress, grpcTLSFile{name: "-grpc-ca/GRPC_CA", path: cfg.GRPCCA})
 }
 
 // agentFileConfig is the JSON shape of the agent's config file. Fields are
@@ -125,6 +137,7 @@ type agentFileConfig struct {
 	PollInterval   *string `json:"poll_interval"`
 	CryptoKey      *string `json:"crypto_key"`
 	GRPCAddress    *string `json:"grpc_address"`
+	GRPCCA         *string `json:"grpc_ca"`
 }
 
 // applyAgentConfigFile reads the JSON config file at path and merges its
@@ -161,6 +174,9 @@ func applyAgentConfigFile(cfg *AgentConfig, path string) error {
 	}
 	if fc.GRPCAddress != nil {
 		cfg.GRPCAddress = *fc.GRPCAddress
+	}
+	if fc.GRPCCA != nil {
+		cfg.GRPCCA = *fc.GRPCCA
 	}
 
 	return nil

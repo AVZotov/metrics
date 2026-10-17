@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
@@ -17,6 +18,10 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 	pb "github.com/AVZotov/metrics/internal/proto"
 )
+
+// tlsSecurityProtocol is the SecurityProtocol that grpc-go's TLS
+// credentials report in their ProtocolInfo.
+const tlsSecurityProtocol = "tls"
 
 // metricsUpdater is the part of the metrics service the gRPC server needs.
 type metricsUpdater interface {
@@ -39,18 +44,29 @@ func NewServer(service metricsUpdater, logger *zap.Logger) *Server {
 }
 
 // NewGRPCServer returns a *grpc.Server with the Metrics service registered
-// on top of service. Every unary call goes through RecoveryInterceptor
-// first and then TrustedSubnetInterceptor(subnet), so panics in either the
-// subnet check or the handler are recovered.
-func NewGRPCServer(service metricsUpdater, subnet netip.Prefix, logger *zap.Logger) *grpc.Server {
-	srv := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(
-			RecoveryInterceptor(logger),
-			TrustedSubnetInterceptor(subnet, logger),
-		),
-	)
+// on top of service. It serves over creds, which must be TLS credentials
+// (for example from credentials.NewServerTLSFromFile): the server has no
+// plaintext mode, so nil or non-TLS creds return apperrors.ErrGRPCTLSRequired.
+// Every unary call goes through RecoveryInterceptor first. When subnet is
+// valid, TrustedSubnetInterceptor(subnet) runs next, so a panic in either
+// the subnet check or the handler is recovered. The zero subnet installs
+// no subnet check.
+func NewGRPCServer(
+	service metricsUpdater, subnet netip.Prefix, creds credentials.TransportCredentials, logger *zap.Logger,
+) (*grpc.Server, error) {
+	if creds == nil {
+		return nil, fmt.Errorf("%w: no credentials given", apperrors.ErrGRPCTLSRequired)
+	}
+	if protocol := creds.Info().SecurityProtocol; protocol != tlsSecurityProtocol {
+		return nil, fmt.Errorf("%w: got %q credentials", apperrors.ErrGRPCTLSRequired, protocol)
+	}
+	interceptors := []grpc.UnaryServerInterceptor{RecoveryInterceptor(logger)}
+	if subnet.IsValid() {
+		interceptors = append(interceptors, TrustedSubnetInterceptor(subnet, logger))
+	}
+	srv := grpc.NewServer(grpc.Creds(creds), grpc.ChainUnaryInterceptor(interceptors...))
 	pb.RegisterMetricsServer(srv, NewServer(service, logger))
-	return srv
+	return srv, nil
 }
 
 // toModel converts a protobuf metric into the service model.
@@ -104,15 +120,23 @@ func (s *Server) UpdateMetrics(ctx context.Context, req *pb.UpdateMetricsRequest
 	for _, pm := range req.GetMetrics() {
 		m, err := toModel(pm)
 		if err != nil {
-			s.logger.Error("failed to convert metric", zap.Error(err))
+			// A metric that can't be converted is the client's fault.
+			s.logger.Warn("failed to convert metric", zap.Error(err))
 			return nil, toStatus(err)
 		}
 		metrics = append(metrics, m)
 	}
 	ip := s.peerIP(ctx)
 	if err := s.service.UpdateMetrics(metrics, ip); err != nil {
-		s.logger.Error("failed to update metrics", zap.Error(err))
-		return nil, toStatus(err)
+		st := toStatus(err)
+		// Client errors are logged as Warn so they don't drown out real
+		// server failures at Error level.
+		if status.Code(st) == codes.InvalidArgument {
+			s.logger.Warn("failed to update metrics", zap.Error(err))
+		} else {
+			s.logger.Error("failed to update metrics", zap.Error(err))
+		}
+		return nil, st
 	}
 	return &pb.UpdateMetricsResponse{}, nil
 }

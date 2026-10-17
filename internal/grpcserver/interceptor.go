@@ -34,8 +34,9 @@ func RecoveryInterceptor(logger *zap.Logger) grpc.UnaryServerInterceptor {
 }
 
 // TrustedSubnetInterceptor rejects calls whose x-real-ip metadata is missing,
-// unparsable or outside subnet with codes.PermissionDenied. The zero subnet
-// (IsValid() == false) disables the check and lets every call pass through.
+// unparsable or outside subnet with codes.PermissionDenied. subnet must be
+// valid. NewGRPCServer installs the interceptor only when a subnet is
+// configured.
 func TrustedSubnetInterceptor(subnet netip.Prefix, logger *zap.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		var rawIP string

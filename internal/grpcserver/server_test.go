@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -38,8 +41,8 @@ func TestServer_UpdateMetrics(t *testing.T) {
 		Addr: &net.TCPAddr{IP: net.ParseIP("10.0.0.5"), Port: 54321},
 	})
 
-	gauge := &pb.Metric{Id: "Alloc", Type: pb.Metric_GAUGE, Value: 1.5}
-	counter := &pb.Metric{Id: "PollCount", Type: pb.Metric_COUNTER, Delta: 7}
+	gauge := pb.Metric_builder{Id: "Alloc", Type: pb.Metric_GAUGE, Value: 1.5}.Build()
+	counter := pb.Metric_builder{Id: "PollCount", Type: pb.Metric_COUNTER, Delta: 7}.Build()
 
 	value, delta := 1.5, int64(7)
 	wantBatch := []models.Metrics{
@@ -56,6 +59,8 @@ func TestServer_UpdateMetrics(t *testing.T) {
 		wantCalled  bool
 		wantMetrics []models.Metrics
 		wantIP      string
+		// wantLevel is the level of the failure log, checked when wantCode != OK.
+		wantLevel zapcore.Level
 	}{
 		{
 			name:        "gauge and counter batch",
@@ -67,10 +72,11 @@ func TestServer_UpdateMetrics(t *testing.T) {
 			wantIP:      "10.0.0.5",
 		},
 		{
-			name:     "unknown metric type",
-			ctx:      withPeer,
-			metrics:  []*pb.Metric{{Id: "x", Type: pb.Metric_MType(5)}},
-			wantCode: codes.InvalidArgument,
+			name:      "unknown metric type",
+			ctx:       withPeer,
+			metrics:   []*pb.Metric{pb.Metric_builder{Id: "x", Type: pb.Metric_MType(5)}.Build()},
+			wantCode:  codes.InvalidArgument,
+			wantLevel: zapcore.WarnLevel,
 		},
 		{
 			name:        "service rejects empty name",
@@ -81,6 +87,7 @@ func TestServer_UpdateMetrics(t *testing.T) {
 			wantCalled:  true,
 			wantMetrics: wantBatch[:1],
 			wantIP:      "10.0.0.5",
+			wantLevel:   zapcore.WarnLevel,
 		},
 		{
 			name:        "service internal error",
@@ -91,6 +98,7 @@ func TestServer_UpdateMetrics(t *testing.T) {
 			wantCalled:  true,
 			wantMetrics: wantBatch[:1],
 			wantIP:      "10.0.0.5",
+			wantLevel:   zapcore.ErrorLevel,
 		},
 		{
 			name:        "no peer in context",
@@ -106,9 +114,10 @@ func TestServer_UpdateMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &mockUpdater{err: tt.svcErr}
-			srv := NewServer(svc, zap.NewNop())
+			core, logs := observer.New(zapcore.DebugLevel)
+			srv := NewServer(svc, zap.New(core))
 
-			resp, err := srv.UpdateMetrics(tt.ctx, &pb.UpdateMetricsRequest{Metrics: tt.metrics})
+			resp, err := srv.UpdateMetrics(tt.ctx, pb.UpdateMetricsRequest_builder{Metrics: tt.metrics}.Build())
 
 			require.Equal(t, tt.wantCode, status.Code(err))
 			if tt.wantCode == codes.OK {
@@ -125,6 +134,14 @@ func TestServer_UpdateMetrics(t *testing.T) {
 
 			if tt.svcErr != nil && tt.wantCode == codes.Internal {
 				assert.NotContains(t, status.Convert(err).Message(), tt.svcErr.Error())
+			}
+
+			if tt.wantCode != codes.OK {
+				failures := logs.Filter(func(e observer.LoggedEntry) bool {
+					return strings.HasPrefix(e.Message, "failed to")
+				}).All()
+				require.Len(t, failures, 1)
+				assert.Equal(t, tt.wantLevel, failures[0].Level)
 			}
 		})
 	}
