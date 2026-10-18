@@ -18,7 +18,10 @@ import (
 	"github.com/AVZotov/metrics/internal/config"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
+	pb "github.com/AVZotov/metrics/internal/proto"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 var buildVersion string
@@ -52,8 +55,41 @@ func run(logger *zap.Logger) error {
 		return err
 	}
 	client := &http.Client{}
-	baseURL := fmt.Sprintf("http://%s", cfg.String())
-	a, err := agent.NewAgent(client, baseURL, cfg.Key, cfg.CryptoKey)
+	serverAddr := cfg.String()
+	baseURL := fmt.Sprintf("http://%s", serverAddr)
+	opts := agent.AgentOptions{Key: cfg.Key, CryptoKeyPath: cfg.CryptoKey}
+
+	// The real IP must be the one the agent uses to reach the server it
+	// actually reports to, so with gRPC it's resolved against the gRPC address.
+	ipTarget := serverAddr
+	if cfg.GRPCAddress != "" {
+		var conn *grpc.ClientConn
+		conn, err = dialGRPC(cfg.GRPCAddress, cfg.GRPCCA)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		opts.GRPCClient = pb.NewMetricsClient(conn)
+		ipTarget = cfg.GRPCAddress
+		logger.Info("sending metrics over gRPC with TLS", zap.String("address", cfg.GRPCAddress))
+		if cfg.Key != "" || cfg.CryptoKey != "" {
+			logger.Warn(
+				"gRPC traffic is encrypted with TLS, but signing (-k) and body encryption " +
+					"(-crypto-key) apply to HTTP only; gRPC metrics are sent without them",
+			)
+		}
+	}
+
+	// The agent can't know whether the server enforces a trusted subnet, so
+	// a failure here only drops the real IP instead of exiting.
+	realIP, err := agent.HostIP(ipTarget)
+	if err != nil {
+		logger.Warn("could not determine host IP, real IP reporting disabled", zap.Error(err))
+	} else {
+		logger.Info("determined host IP for real IP reporting", zap.String("ip", realIP.String()))
+	}
+	opts.RealIP = realIP
+	a, err := agent.NewAgent(client, baseURL, opts)
 	if err != nil {
 		return err
 	}
@@ -99,6 +135,22 @@ func run(logger *zap.Logger) error {
 
 	logger.Info("agent shut down")
 	return nil
+}
+
+// dialGRPC returns a TLS client connection to address that trusts only the
+// PEM certificate at caPath. The server's certificate must be signed by it
+// (or be it) and list the host from address in its SANs. NewClient doesn't
+// connect; the connection and TLS handshake happen on the first call.
+func dialGRPC(address, caPath string) (*grpc.ClientConn, error) {
+	creds, err := credentials.NewClientTLSFromFile(caPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("load gRPC CA certificate: %w", err)
+	}
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, fmt.Errorf("create gRPC client: %w", err)
+	}
+	return conn, nil
 }
 
 // stopWorkers waits up to timeout for all agent goroutines to finish. If

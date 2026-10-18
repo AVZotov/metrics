@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/netip"
 	"runtime"
 	"strconv"
 	"sync"
@@ -18,40 +19,60 @@ import (
 	"github.com/AVZotov/metrics/internal/encrypt"
 	apperrors "github.com/AVZotov/metrics/internal/errors"
 	models "github.com/AVZotov/metrics/internal/model"
+	pb "github.com/AVZotov/metrics/internal/proto"
 	"github.com/AVZotov/metrics/internal/sign"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Agent collects runtime and system metrics and reports them to the server.
 type Agent struct {
-	mu      sync.Mutex
-	client  *http.Client
-	baseURL string
-	gauge   map[string]float64
-	counter map[string]int64
-	key     string
-	pubKey  *rsa.PublicKey
-	cpuWarm sync.Once
+	mu         sync.Mutex
+	client     *http.Client
+	baseURL    string
+	grpcClient pb.MetricsClient
+	gauge      map[string]float64
+	counter    map[string]int64
+	key        string
+	pubKey     *rsa.PublicKey
+	realIP     netip.Addr
+	cpuWarm    sync.Once
 }
 
-// NewAgent creates an Agent that sends metrics to baseURL using client.
-// If key is non-empty, outgoing requests are signed with it. If
-// cryptoKeyPath is non-empty, it's loaded as an RSA public key and outgoing
-// bodies are hybrid-encrypted with it; returns an error if the key can't be
-// loaded.
-func NewAgent(client *http.Client, baseURL, key, cryptoKeyPath string) (*Agent, error) {
+// AgentOptions holds optional agent features. The zero value of every
+// field disables its feature, so callers set only what they need.
+type AgentOptions struct {
+	// Key, when non-empty, signs outgoing HTTP requests.
+	Key string
+	// CryptoKeyPath, when non-empty, is loaded as an RSA public key used to
+	// hybrid-encrypt outgoing HTTP bodies.
+	CryptoKeyPath string
+	// RealIP, when valid, is sent with every metrics request: in the
+	// X-Real-IP header over HTTP, in x-real-ip metadata over gRPC.
+	RealIP netip.Addr
+	// GRPCClient, when non-nil, sends metrics over gRPC instead of HTTP.
+	GRPCClient pb.MetricsClient
+}
+
+// NewAgent creates an Agent that sends metrics to baseURL using client,
+// with optional features configured by opts. Returns an error if
+// opts.CryptoKeyPath is set but the key can't be loaded.
+func NewAgent(client *http.Client, baseURL string, opts AgentOptions) (*Agent, error) {
 	gauge := make(map[string]float64, len(gMetrics))
 	counter := make(map[string]int64, len(cMetrics))
 	a := &Agent{
-		client:  client,
-		baseURL: baseURL,
-		gauge:   gauge,
-		counter: counter,
-		key:     key,
+		client:     client,
+		baseURL:    baseURL,
+		grpcClient: opts.GRPCClient,
+		gauge:      gauge,
+		counter:    counter,
+		key:        opts.Key,
+		realIP:     opts.RealIP,
 	}
-	if cryptoKeyPath != "" {
-		pubKey, err := encrypt.LoadPublicKey(cryptoKeyPath)
+	if opts.CryptoKeyPath != "" {
+		pubKey, err := encrypt.LoadPublicKey(opts.CryptoKeyPath)
 		if err != nil {
 			return nil, err
 		}
@@ -145,18 +166,27 @@ func (a *Agent) Snapshot() []models.Metrics {
 }
 
 // SendWithRetry sends metrics to the server, retrying on recoverable errors
-// (network failures, 5xx responses) until ctx is done. Cancelling ctx also
-// aborts an in-flight request. Returns an error if all retries are
-// exhausted or the failure is non-recoverable.
+// (network failures, 5xx responses, gRPC Unavailable/Internal) until ctx is
+// done. Cancelling ctx also aborts an in-flight request. Returns an error
+// if all retries are exhausted or the failure is non-recoverable.
 func (a *Agent) SendWithRetry(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	if err := a.sendMetricsJSON(ctx, metrics); err != nil {
+	if err := a.send(ctx, metrics); err != nil {
 		return a.retryReport(ctx, metrics, err)
 	}
 
 	return nil
+}
+
+// send delivers metrics in a single attempt, over gRPC if a gRPC client is
+// configured and over HTTP otherwise.
+func (a *Agent) send(ctx context.Context, metrics []models.Metrics) error {
+	if a.grpcClient != nil {
+		return a.sendMetricsGRPC(ctx, metrics)
+	}
+	return a.sendMetricsJSON(ctx, metrics)
 }
 
 // Unused functions for back compatibility
@@ -247,6 +277,9 @@ func (a *Agent) sendMetricsJSON(ctx context.Context, metrics []models.Metrics) e
 	if encryptedKeyHeader != "" {
 		req.Header.Set("X-Crypto-Key", encryptedKeyHeader)
 	}
+	if a.realIP.IsValid() {
+		req.Header.Set("X-Real-IP", a.realIP.String())
+	}
 
 	if a.key != "" {
 		signature := sign.Sign(body, a.key)
@@ -280,7 +313,7 @@ func (a *Agent) retryReport(ctx context.Context, metrics []models.Metrics, first
 		case <-time.After(delay):
 		}
 
-		err := a.sendMetricsJSON(ctx, metrics)
+		err := a.send(ctx, metrics)
 		if err == nil {
 			return &apperrors.RetryError{Succeeded: true, Attempts: attempts}
 		}
@@ -313,8 +346,17 @@ func httpStatusError(statusCode int) error {
 	return fmt.Errorf("unexpected response status code %d", statusCode)
 }
 
+// isRetriable reports whether err is a temporary failure worth retrying.
+// For gRPC, Unavailable mirrors a network error (server down, connection
+// refused or dropped) and Internal mirrors a 5xx response (the server's
+// storage failed). status.Code returns Unknown for non-gRPC errors, so it
+// never matches them.
 func isRetriable(err error) bool {
 	if _, ok := errors.AsType[*apperrors.NetworkError](err); ok {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Internal:
 		return true
 	}
 

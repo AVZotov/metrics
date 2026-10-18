@@ -1,6 +1,9 @@
 package config
 
 import (
+	"flag"
+	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,6 +35,7 @@ func TestApplyServerConfigFile(t *testing.T) {
 		assert.Equal(t, fileStoragePath, cfg.FileStoragePath)
 		assert.False(t, cfg.DSNSet)
 		assert.Equal(t, "", cfg.CryptoKey)
+		assert.False(t, cfg.TrustedSubnet.IsValid())
 	})
 
 	t.Run("present keys override defaults", func(t *testing.T) {
@@ -46,7 +50,8 @@ func TestApplyServerConfigFile(t *testing.T) {
 			"store_interval": "5s",
 			"store_file": "/tmp/from-file.json",
 			"database_dsn": "postgres://file",
-			"crypto_key": "`+keyPath+`"
+			"crypto_key": "`+keyPath+`",
+			"trusted_subnet": "192.168.1.0/24"
 		}`,
 		)
 
@@ -60,6 +65,28 @@ func TestApplyServerConfigFile(t *testing.T) {
 		assert.True(t, cfg.DSNSet)
 		assert.Equal(t, "postgres://file", cfg.DSN)
 		assert.Equal(t, keyPath, cfg.CryptoKey)
+		assert.Equal(t, netip.MustParsePrefix("192.168.1.0/24"), cfg.TrustedSubnet)
+	})
+
+	t.Run("empty trusted_subnet means no restriction", func(t *testing.T) {
+		cfg := &ServerConfig{}
+		setServerDefaults(cfg)
+		path := writeJSONConfig(t, `{"trusted_subnet": ""}`)
+
+		require.NoError(t, applyServerConfigFile(cfg, path))
+
+		assert.False(t, cfg.TrustedSubnet.IsValid())
+	})
+
+	t.Run("invalid trusted_subnet returns error", func(t *testing.T) {
+		for _, bad := range []string{"192.168.1.0/33", "abc", "192.168.1.0"} {
+			cfg := &ServerConfig{}
+			setServerDefaults(cfg)
+			path := writeJSONConfig(t, `{"trusted_subnet": "`+bad+`"}`)
+			err := applyServerConfigFile(cfg, path)
+			require.Error(t, err, bad)
+			assert.ErrorContains(t, err, "trusted_subnet")
+		}
 	})
 
 	t.Run("empty database_dsn is treated as not set", func(t *testing.T) {
@@ -190,6 +217,133 @@ func TestNewServerConfig_Precedence(t *testing.T) {
 		cfg := run(t, []string{"-c", path}, nil)
 		assert.Equal(t, keyPath, cfg.CryptoKey)
 	})
+}
+
+func TestNewServerConfig_TrustedSubnet(t *testing.T) {
+	const (
+		fileSubnet = "10.0.0.0/8"
+		flagSubnet = "172.16.0.0/12"
+		envSubnet  = "192.168.1.0/24"
+	)
+
+	newConfig := func(t *testing.T, args []string, env map[string]string) (*ServerConfig, error) {
+		t.Helper()
+		resetFlags()
+		origArgs := os.Args
+		os.Args = append([]string{"cmd"}, args...)
+		t.Cleanup(func() { os.Args = origArgs })
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		return NewServerConfig()
+	}
+	filePath := func(t *testing.T) string {
+		t.Helper()
+		return writeJSONConfig(t, `{"trusted_subnet": "`+fileSubnet+`"}`)
+	}
+
+	tests := []struct {
+		name string
+		args func(t *testing.T) []string
+		env  map[string]string
+		want netip.Prefix
+	}{
+		{
+			name: "not set anywhere",
+			args: func(*testing.T) []string { return nil },
+			want: netip.Prefix{},
+		},
+		{
+			name: "file only",
+			args: func(t *testing.T) []string { return []string{"-c", filePath(t)} },
+			want: netip.MustParsePrefix(fileSubnet),
+		},
+		{
+			name: "flag only",
+			args: func(*testing.T) []string { return []string{"-t", flagSubnet} },
+			want: netip.MustParsePrefix(flagSubnet),
+		},
+		{
+			name: "env only",
+			args: func(*testing.T) []string { return nil },
+			env:  map[string]string{"TRUSTED_SUBNET": envSubnet},
+			want: netip.MustParsePrefix(envSubnet),
+		},
+		{
+			name: "flag overrides file",
+			args: func(t *testing.T) []string { return []string{"-c", filePath(t), "-t", flagSubnet} },
+			want: netip.MustParsePrefix(flagSubnet),
+		},
+		{
+			name: "env overrides flag and file",
+			args: func(t *testing.T) []string { return []string{"-c", filePath(t), "-t", flagSubnet} },
+			env:  map[string]string{"TRUSTED_SUBNET": envSubnet},
+			want: netip.MustParsePrefix(envSubnet),
+		},
+		{
+			// caarlos0/env skips set-but-empty variables, so an empty
+			// TRUSTED_SUBNET can't clear a value from the flag or file.
+			name: "set-but-empty env keeps flag value",
+			args: func(t *testing.T) []string { return []string{"-c", filePath(t), "-t", flagSubnet} },
+			env:  map[string]string{"TRUSTED_SUBNET": ""},
+			want: netip.MustParsePrefix(flagSubnet),
+		},
+		{
+			name: "set-but-empty env keeps file value",
+			args: func(t *testing.T) []string { return []string{"-c", filePath(t)} },
+			env:  map[string]string{"TRUSTED_SUBNET": ""},
+			want: netip.MustParsePrefix(fileSubnet),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := newConfig(t, tt.args(t), tt.env)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.TrustedSubnet)
+			assert.Equal(t, tt.want.IsValid(), cfg.TrustedSubnet.IsValid())
+		})
+	}
+
+	for _, bad := range []string{"192.168.1.0/33", "abc"} {
+		t.Run("invalid file value "+bad+" returns error", func(t *testing.T) {
+			path := writeJSONConfig(t, `{"trusted_subnet": "`+bad+`"}`)
+			_, err := newConfig(t, []string{"-c", path}, nil)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "trusted_subnet")
+		})
+
+		t.Run("invalid env value "+bad+" returns error", func(t *testing.T) {
+			_, err := newConfig(t, nil, map[string]string{"TRUSTED_SUBNET": bad})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "TrustedSubnet")
+		})
+	}
+}
+
+// TestParseServerFlags_InvalidTrustedSubnet checks that -t rejects a bad
+// CIDR. parseServerFlags calls flag.Parse, which discards the parse error
+// (in production flag.CommandLine is ExitOnError and exits with status 2
+// instead), so the test registers the flags through parseServerFlags and
+// then re-parses the same ContinueOnError CommandLine to observe the error.
+func TestParseServerFlags_InvalidTrustedSubnet(t *testing.T) {
+	for _, bad := range []string{"192.168.1.0/33", "abc", "192.168.1.0"} {
+		t.Run(bad, func(t *testing.T) {
+			resetFlags()
+			flag.CommandLine.SetOutput(io.Discard)
+			origArgs := os.Args
+			os.Args = []string{"cmd"}
+			defer func() { os.Args = origArgs }()
+
+			cfg := &ServerConfig{}
+			setServerDefaults(cfg)
+			require.NoError(t, parseServerFlags(cfg))
+
+			err := flag.CommandLine.Parse([]string{"-t", bad})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "-t")
+		})
+	}
 }
 
 func TestSetServerDefaults(t *testing.T) {
@@ -414,6 +568,7 @@ func TestParseServerEnv(t *testing.T) {
 		wantStoragePath string
 		wantDSNSet      bool
 		wantDSN         string
+		wantSubnet      netip.Prefix
 		wantErr         bool
 	}{
 		{
@@ -511,6 +666,21 @@ func TestParseServerEnv(t *testing.T) {
 			wantDSNSet:      true,
 			wantDSN:         "postgres://user:pass@localhost/db",
 		},
+		{
+			name:            "TRUSTED_SUBNET parsed into prefix",
+			envVars:         map[string]string{"TRUSTED_SUBNET": "192.168.1.0/24"},
+			wantHost:        host,
+			wantPort:        port,
+			wantStoreInt:    storeInterval,
+			wantRestore:     restore,
+			wantStoragePath: fileStoragePath,
+			wantSubnet:      netip.MustParsePrefix("192.168.1.0/24"),
+		},
+		{
+			name:    "invalid TRUSTED_SUBNET returns error",
+			envVars: map[string]string{"TRUSTED_SUBNET": "192.168.1.0/33"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -536,6 +706,7 @@ func TestParseServerEnv(t *testing.T) {
 				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
 				assert.Equal(t, tt.wantDSNSet, cfg.DSNSet)
 				assert.Equal(t, tt.wantDSN, cfg.DSN)
+				assert.Equal(t, tt.wantSubnet, cfg.TrustedSubnet)
 			},
 		)
 	}
@@ -552,6 +723,7 @@ func TestParseServerFlags(t *testing.T) {
 		wantStoragePath string
 		wantDSNSet      bool
 		wantDSN         string
+		wantSubnet      netip.Prefix
 		wantErr         error
 	}{
 		{
@@ -637,6 +809,16 @@ func TestParseServerFlags(t *testing.T) {
 			wantDSNSet:      true,
 			wantDSN:         "postgres://user:pass@localhost/db",
 		},
+		{
+			name:            "-t flag parsed into prefix",
+			args:            []string{"cmd", "-t", "192.168.1.0/24"},
+			wantHost:        host,
+			wantPort:        port,
+			wantStoreInt:    storeInterval,
+			wantRestore:     restore,
+			wantStoragePath: fileStoragePath,
+			wantSubnet:      netip.MustParsePrefix("192.168.1.0/24"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -663,6 +845,7 @@ func TestParseServerFlags(t *testing.T) {
 				assert.Equal(t, tt.wantStoragePath, cfg.FileStoragePath)
 				assert.Equal(t, tt.wantDSNSet, cfg.DSNSet)
 				assert.Equal(t, tt.wantDSN, cfg.DSN)
+				assert.Equal(t, tt.wantSubnet, cfg.TrustedSubnet)
 			},
 		)
 	}

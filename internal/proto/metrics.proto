@@ -1,0 +1,48 @@
+edition = "2023";
+
+package metrics;
+
+import "google/protobuf/go_features.proto";
+
+// При необходимости поправьте go_package в соответствии со структурой вашего проекта.
+option go_package = "github.com/AVZotov/metrics/internal/proto";
+
+// Generated Go code uses the Opaque API: fields are reachable only through
+// getters, setters and builders.
+option features.(pb.go).api_level = API_OPAQUE;
+
+// Keep proto3 semantics: zero values are not sent on the wire and fields
+// have no Has/Clear methods.
+option features.field_presence = IMPLICIT;
+
+// Metric определяет единичную метрику.
+message Metric {
+  string id = 1; // имя метрики
+
+  // MType задаёт тип метрики.
+  enum MType {
+    GAUGE = 0;
+    COUNTER = 1;
+  }
+
+  MType type = 2; // тип метрики
+  // Поле delta для метрик-счётчиков.
+  int64 delta = 3;
+  // Поле value для метрик-измерителей.
+  double value = 4;
+}
+
+// UpdateMetricsRequest содержит список метрик для обновления.
+message UpdateMetricsRequest {
+  repeated Metric metrics = 1;
+}
+
+// UpdateMetricsResponse — пустой ответ для подтверждения успешного обновления.
+message UpdateMetricsResponse {}
+
+// MetricsService определяет сервис для работы с метриками.
+service Metrics {
+  // UpdateMetrics обновляет метрики на сервере.
+  // Этот метод подходит для отправки как единичных метрик, так и батчей.
+  rpc UpdateMetrics(UpdateMetricsRequest) returns (UpdateMetricsResponse);
+}

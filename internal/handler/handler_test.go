@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +23,7 @@ import (
 	models "github.com/AVZotov/metrics/internal/model"
 	"github.com/AVZotov/metrics/internal/repository"
 	"github.com/AVZotov/metrics/internal/service"
+	"github.com/AVZotov/metrics/internal/sign"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +72,7 @@ func (m *mockService) Ping(_ context.Context) error {
 func setupRouterWithService(svc service.PersistService) chi.Router {
 	logger, _ := zap.NewDevelopment()
 	h := New(svc, logger)
-	return NewRouter(h, logger, "", false, nil)
+	return NewRouter(h, logger, RouterOptions{})
 }
 
 func setupRouter(t *testing.T) chi.Router {
@@ -81,13 +84,13 @@ func setupRouter(t *testing.T) chi.Router {
 	s := service.NewMetricsService(store, notifier)
 	logger, _ := zap.NewDevelopment()
 	h := New(s, logger)
-	return NewRouter(h, logger, "", false, nil)
+	return NewRouter(h, logger, RouterOptions{})
 }
 
 func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", false, nil)
+	router := NewRouter(h, logger, RouterOptions{})
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
@@ -99,13 +102,206 @@ func TestNewRouter_PprofDisabledByDefault(t *testing.T) {
 func TestNewRouter_PprofEnabled(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := New(&mockService{}, logger)
-	router := NewRouter(h, logger, "", true, nil)
+	router := NewRouter(h, logger, RouterOptions{EnablePprof: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestNewRouter_TrustedSubnet checks that a configured trusted subnet
+// guards only the metric write endpoints: writes from outside it get 403
+// before reaching the service, while reads and public endpoints stay open.
+func TestNewRouter_TrustedSubnet(t *testing.T) {
+	const (
+		trustedIP   = "192.168.1.10"
+		untrustedIP = "10.0.0.1"
+	)
+
+	routes := []struct {
+		method      string
+		path        string
+		body        string
+		contentType string
+		write       bool
+	}{
+		{method: http.MethodPost, path: "/update/gauge/g/1.5", contentType: "text/plain", write: true},
+		{method: http.MethodPost, path: "/update", body: `{"id":"g","type":"gauge","value":1.5}`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/update/", body: `{"id":"g","type":"gauge","value":1.5}`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/updates", body: `[{"id":"g","type":"gauge","value":1.5}]`, contentType: "application/json", write: true},
+		{method: http.MethodPost, path: "/updates/", body: `[{"id":"g","type":"gauge","value":1.5}]`, contentType: "application/json", write: true},
+		{method: http.MethodGet, path: "/value/gauge/g"},
+		{method: http.MethodPost, path: "/value", body: `{"id":"g","type":"gauge"}`, contentType: "application/json"},
+		{method: http.MethodPost, path: "/value/", body: `{"id":"g","type":"gauge"}`, contentType: "application/json"},
+		{method: http.MethodGet, path: "/ping"},
+		{method: http.MethodGet, path: "/"},
+	}
+
+	newRouter := func(t *testing.T) (chi.Router, *int) {
+		t.Helper()
+		writes := 0
+		value := 1.5
+		svc := &mockService{
+			updateFn: func(_, _, _ string) error {
+				writes++
+				return nil
+			},
+			updateMetricsFn: func([]models.Metrics) error {
+				writes++
+				return nil
+			},
+			getFn: func(id, mType string) (*models.Metrics, error) {
+				return &models.Metrics{ID: id, MType: mType, Value: &value}, nil
+			},
+		}
+		h := New(svc, zap.NewNop())
+		opts := RouterOptions{TrustedSubnet: netip.MustParsePrefix("192.168.1.0/24")}
+		return NewRouter(h, zap.NewNop(), opts), &writes
+	}
+
+	serve := func(router chi.Router, method, path, body, contentType, realIP string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		if realIP != "" {
+			req.Header.Set("X-Real-IP", realIP)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for _, rt := range routes {
+		name := rt.method + " " + rt.path
+		for _, realIP := range []string{"", untrustedIP} {
+			t.Run(name+" from untrusted IP "+strconv.Quote(realIP), func(t *testing.T) {
+				router, writes := newRouter(t)
+				code := serve(router, rt.method, rt.path, rt.body, rt.contentType, realIP)
+				if rt.write {
+					assert.Equal(t, http.StatusForbidden, code)
+					assert.Zero(t, *writes, "service must not be called for a forbidden write")
+					return
+				}
+				assert.Equal(t, http.StatusOK, code)
+			})
+		}
+
+		t.Run(name+" from trusted IP", func(t *testing.T) {
+			router, writes := newRouter(t)
+			code := serve(router, rt.method, rt.path, rt.body, rt.contentType, trustedIP)
+			assert.Equal(t, http.StatusOK, code)
+			if rt.write {
+				assert.Equal(t, 1, *writes)
+			}
+		})
+	}
+}
+
+// TestNewRouter_OptionalMiddleware checks that signature verification,
+// decryption and the trusted subnet check are mounted only when their
+// RouterOptions field is set: unset, the request reaches the handler
+// untouched; set, it is checked.
+func TestNewRouter_OptionalMiddleware(t *testing.T) {
+	const signKey = "secret"
+	body := []byte(`[{"id":"g","type":"gauge","value":1.5}]`)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	encrypted, encryptedKeyB64, err := encrypt.EncryptHybrid(&privateKey.PublicKey, body)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		opts       RouterOptions
+		body       []byte
+		headers    map[string]string
+		wantCode   int
+		wantWrites int
+		// wantSigned reports whether the response carries a HashSHA256 header.
+		wantSigned bool
+	}{
+		{
+			name:       "no key: signature is not checked and response is not signed",
+			body:       body,
+			headers:    map[string]string{"HashSHA256": "bogus"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:     "key set: wrong signature is rejected",
+			opts:     RouterOptions{Key: signKey},
+			body:     body,
+			headers:  map[string]string{"HashSHA256": "bogus"},
+			wantCode: http.StatusBadRequest,
+			// The 400 is signed too: the middleware signs every response.
+			wantSigned: true,
+		},
+		{
+			name:       "key set: valid signature passes and response is signed",
+			opts:       RouterOptions{Key: signKey},
+			body:       body,
+			headers:    map[string]string{"HashSHA256": sign.Sign(body, signKey)},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+			wantSigned: true,
+		},
+		{
+			name:       "no private key: X-Crypto-Key is ignored and plaintext reaches the handler",
+			body:       body,
+			headers:    map[string]string{"X-Crypto-Key": "anything"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "private key set: encrypted body is decrypted",
+			opts:       RouterOptions{PrivateKey: privateKey},
+			body:       encrypted,
+			headers:    map[string]string{"X-Crypto-Key": encryptedKeyB64},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "no trusted subnet: write from any X-Real-IP passes",
+			body:       body,
+			headers:    map[string]string{"X-Real-IP": "10.0.0.1"},
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+		{
+			name:       "no trusted subnet: write without X-Real-IP passes",
+			body:       body,
+			wantCode:   http.StatusOK,
+			wantWrites: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writes := 0
+			svc := &mockService{
+				updateMetricsFn: func([]models.Metrics) error {
+					writes++
+					return nil
+				},
+			}
+			router := NewRouter(New(svc, zap.NewNop()), zap.NewNop(), tt.opts)
+
+			req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantCode, w.Code)
+			assert.Equal(t, tt.wantWrites, writes)
+			assert.Equal(t, tt.wantSigned, w.Header().Get("HashSHA256") != "")
+		})
+	}
 }
 
 func TestHandler_update_Counter(t *testing.T) {
@@ -964,24 +1160,6 @@ func TestCompressMiddleware_GzipBothDirections(t *testing.T) {
 	assert.Equal(t, respBody, string(decompressed))
 }
 
-func TestDecryptMiddleware_NoHeaderNoPrivateKey_Passthrough(t *testing.T) {
-	body := `{"id":"cpu","type":"gauge","value":1.5}`
-	var gotBody string
-	next := http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			b, _ := io.ReadAll(r.Body)
-			gotBody = string(b)
-			w.WriteHeader(http.StatusOK)
-		},
-	)
-	mw := decryptMiddleware(nil, zap.NewNop())(next)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, body, gotBody)
-}
-
 func TestDecryptMiddleware_NoHeaderWithPrivateKeyConfigured_Passthrough(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -1001,23 +1179,6 @@ func TestDecryptMiddleware_NoHeaderWithPrivateKeyConfigured_Passthrough(t *testi
 	mw.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, body, gotBody)
-}
-
-func TestDecryptMiddleware_HeaderPresentNoPrivateKey_Returns500WithoutCallingNext(t *testing.T) {
-	nextCalls := 0
-	next := http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			nextCalls++
-			w.WriteHeader(http.StatusOK)
-		},
-	)
-	mw := decryptMiddleware(nil, zap.NewNop())(next)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("irrelevant body"))
-	req.Header.Set("X-Crypto-Key", "anything")
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, 0, nextCalls, "next handler must not run when a key is required but unconfigured")
 }
 
 func TestDecryptMiddleware_ValidHeaderAndBody_DecryptsBeforeNext(t *testing.T) {

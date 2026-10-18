@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -44,4 +45,16 @@ func (a *Address) Set(str string) error {
 // populated from env vars.
 func (a *Address) UnmarshalText(data []byte) error {
 	return a.Set(string(data))
+}
+
+// validateGRPCAddress checks that a non-empty gRPC address is in
+// host:port form. Empty is valid and means gRPC is disabled.
+func validateGRPCAddress(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("grpc address %q: %w", addr, err)
+	}
+	return nil
 }

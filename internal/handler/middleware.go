@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/AVZotov/metrics/internal/encrypt"
 	"github.com/AVZotov/metrics/internal/pool"
 	"github.com/AVZotov/metrics/internal/sign"
+	"github.com/AVZotov/metrics/internal/trustedsubnet"
 	"go.uber.org/zap"
 )
 
@@ -178,15 +180,13 @@ func compressMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// signMiddleware verifies the HashSHA256 request signature and signs the
+// response with key. key must be non-empty. NewRouter mounts the middleware
+// only when a key is configured.
 func signMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
-				if key == "" {
-					next.ServeHTTP(w, r)
-					return
-				}
-
 				sw := &signResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 				bodyBytes, err := io.ReadAll(r.Body)
@@ -211,6 +211,10 @@ func signMiddleware(key string) func(http.Handler) http.Handler {
 	}
 }
 
+// decryptMiddleware decrypts request bodies that carry an X-Crypto-Key
+// header and passes the others through unchanged. privateKey must be
+// non-nil. NewRouter mounts the middleware only when a private key is
+// configured.
 func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(
@@ -218,11 +222,6 @@ func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http
 				encryptedKeyB64 := r.Header.Get("X-Crypto-Key")
 				if encryptedKeyB64 == "" {
 					next.ServeHTTP(w, r)
-					return
-				}
-				if privateKey == nil {
-					http.Error(w, "server not configured for encryption", http.StatusInternalServerError)
-					logger.Warn("no private key configured on server")
 					return
 				}
 				encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
@@ -245,6 +244,25 @@ func decryptMiddleware(privateKey *rsa.PrivateKey, logger *zap.Logger) func(http
 				}
 				r.Body = io.NopCloser(bytes.NewReader(plaintext))
 
+				next.ServeHTTP(w, r)
+			},
+		)
+	}
+}
+
+// trustedSubnetMiddleware rejects requests whose X-Real-IP header is
+// missing, unparsable or outside subnet with 403. subnet must be valid.
+// NewRouter mounts the middleware only when a subnet is configured.
+func trustedSubnetMiddleware(subnet netip.Prefix, logger *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				rawIP := r.Header.Get("X-Real-IP")
+				if err := trustedsubnet.Check(subnet, rawIP); err != nil {
+					logger.Warn("request rejected by trusted subnet", zap.String("ip", rawIP), zap.Error(err))
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
 				next.ServeHTTP(w, r)
 			},
 		)
